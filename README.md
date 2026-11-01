@@ -1,3 +1,5 @@
+> **This fork** targets Apple TV with current Xcode and runs LittleJS games. See [TVOS.md](TVOS.md) for setup and the `just` recipes.
+
 # Ejecta
 
 Ejecta is a fast, open source JavaScript, Canvas & Audio implementation for iOS (iPhone, iPod Touch, iPad) and tvOS (Apple TV). Think of it as a Browser that can only display a Canvas element.

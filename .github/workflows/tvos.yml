@@ -1,0 +1,29 @@
+name: tvOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Runs the LittleJS example against Ejecta's bindings in Node.
+  littlejs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: extractions/setup-just@v2
+      - run: just littlejs-example
+      - run: just check 6
+
+  # Compiles the Ejecta-TV target for the tvOS Simulator (no signing).
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v2
+      - run: xcodebuild -version
+      - run: just littlejs-example
+      - run: just build-sim
