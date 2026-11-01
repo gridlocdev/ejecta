@@ -269,7 +269,7 @@ int EJFontGlyphLayoutSortByTextureIndex(const void *a, const void *b) {
 	// descending characters or not.
 	// So, we have to collect those infos ourselfs from the glyphs.
 	EJTextMetrics metrics = {
-		.width = CTLineGetTypographicBounds(line, NULL, NULL, NULL),
+		.width = (float)CTLineGetTypographicBounds(line, NULL, NULL, NULL),
 		.ascent = 0,
 		.descent = 0,
 	};
