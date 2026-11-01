@@ -31,3 +31,6 @@ jobs:
       - run: defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
       - run: just littlejs-example
       - run: just build-sim
+      - run: xcrun simctl list runtimes
+      # Real rendering, WebGL, audio and file loading inside the app
+      - run: just test-sim

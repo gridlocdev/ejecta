@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Run a built Ejecta-TV.app in a fresh tvOS Simulator and check its console.
+
+Usage: run_sim.py APP_PATH BUNDLE_ID [TIMEOUT_SECONDS]
+
+Creates an Apple TV simulator on the newest tvOS runtime, installs and launches
+the app with its console attached, and prints everything it logs. Exits 0 once
+the app logs a line containing "DONE" with no "FAIL" lines before it, and 1 on
+a FAIL, a crash or a timeout. The simulator is deleted afterwards.
+"""
+import json, os, select, subprocess, sys, time
+
+def simctl(*args, check=True):
+    return subprocess.run(['xcrun', 'simctl', *args], check=check, capture_output=True, text=True)
+
+def main():
+    app, bundle_id = sys.argv[1], sys.argv[2]
+    timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 180
+
+    runtimes = [r for r in json.loads(simctl('list', 'runtimes', '-j').stdout)['runtimes']
+                if r.get('platform') == 'tvOS' and r.get('isAvailable')]
+    if not runtimes:
+        print('No tvOS simulator runtime is installed (xcodebuild -downloadPlatform tvOS)')
+        return 1
+    runtime = sorted(runtimes, key=lambda r: [int(x) for x in r['version'].split('.')])[-1]
+    device_types = [d for d in runtime.get('supportedDeviceTypes', []) if 'Apple TV' in d['name']]
+    device_type = next((d for d in device_types if '4K' in d['name']), device_types[-1] if device_types else None)
+    if not device_type:
+        print('No Apple TV device type for', runtime['name'])
+        return 1
+    print('Simulator:', device_type['name'], 'on', runtime['name'], flush=True)
+
+    udid = simctl('create', 'Ejecta device tests', device_type['identifier'], runtime['identifier']).stdout.strip()
+    try:
+        simctl('boot', udid)
+        simctl('bootstatus', udid, '-b')
+        simctl('install', udid, app)
+
+        # OS_ACTIVITY_DT_MODE makes NSLog write to the console we read
+        env = dict(os.environ, SIMCTL_CHILD_OS_ACTIVITY_DT_MODE='YES')
+        process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
+                                    udid, bundle_id], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, env=env, bufsize=1)
+        failed, done = [], False
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ready, _, _ = select.select([process.stdout], [], [], 1)
+            if ready:
+                line = process.stdout.readline()
+                if not line:
+                    break  # the app exited
+                print(line.rstrip(), flush=True)
+                if 'FAIL ' in line:
+                    failed.append(line.strip())
+                if 'DONE' in line:
+                    done = True
+                    break
+            elif process.poll() is not None:
+                break
+        process.terminate()
+
+        if not done:
+            print('\nThe tests did not finish: crash or timeout after %d s' % timeout)
+            log = simctl('spawn', udid, 'log', 'show', '--last', '2m', '--style', 'compact',
+                         '--predicate', 'process == "Ejecta-TV"', check=False).stdout
+            print('\nLast log lines:\n' + '\n'.join(log.splitlines()[-60:]))
+            return 1
+        if failed:
+            print('\n%d failed:\n  ' % len(failed) + '\n  '.join(failed))
+            return 1
+        print('\nAll device tests passed')
+        return 0
+    finally:
+        simctl('shutdown', udid, check=False)
+        simctl('delete', udid, check=False)
+
+if __name__ == '__main__':
+    sys.exit(main())

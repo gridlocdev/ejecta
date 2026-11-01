@@ -107,6 +107,12 @@ run-sim: build-sim
     xcrun simctl install "{{sim_name}}" {{sim_app}}
     xcrun simctl launch --console-pty "{{sim_name}}" {{bundle_id}}
 
+# Run tools/device-tests in a fresh tvOS Simulator: real canvas, WebGL, audio (replaces App/)
+test-sim:
+    rm -rf App && cp -R tools/device-tests/App App
+    just build-sim
+    python3 tools/device-tests/run_sim.py {{sim_app}} {{bundle_id}}
+
 # List the tvOS simulators Xcode has, to pick EJECTA_TV_SIMULATOR
 simulators:
     xcrun simctl list devices tvOS
