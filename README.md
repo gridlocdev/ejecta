@@ -1,4 +1,4 @@
-> **This fork** targets Apple TV with current Xcode and runs LittleJS games. See [TVOS.md](TVOS.md) for setup and the `just` recipes.
+> **This fork** targets Apple TV with current Xcode, adds Web Audio and `fetch()`, and runs LittleJS games. See [TVOS.md](TVOS.md) for what's new and the [developer guide](developer-guide.md) for setup and local testing.
 
 # Ejecta
 
