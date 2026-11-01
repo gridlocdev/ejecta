@@ -60,4 +60,4 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 - **Ogg audio files** probably won't decode; use `.m4a` or `.mp3`.
 - **Audio effects pass through.** Filter, delay, compressor, convolver and wave shaper nodes can be created and connected, but don't change the sound. Loops always play the whole buffer (`loopStart` and `loopEnd` are ignored).
 - **Dashed lines** draw solid.
-- **Untested on hardware so far.** The code was written and tested without a Mac. The C mixer and the JavaScript run under tests, but the Objective-C hasn't been compiled yet, so expect a round of fixes on the first `just build-sim`.
+- **Not yet run on a device.** CI builds the `Ejecta-TV` target with Xcode 16.4, and the C mixer and the JavaScript run under tests. Nothing has run in the Simulator or on an Apple TV yet.
