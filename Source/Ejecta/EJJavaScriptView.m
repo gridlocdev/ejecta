@@ -89,6 +89,15 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
     
     // Create the global JS context in its own group, so it can be released properly
     jsGlobalContext = JSGlobalContextCreateInGroup(NULL, NULL);
+
+    #ifdef DEBUG
+        // Lets Safari's Develop menu attach Web Inspector to the game's
+        // JavaScript: console, breakpoints, profiling. Debug builds only.
+        if( @available(iOS 16.4, tvOS 16.4, *) ) {
+            JSGlobalContextSetInspectable(jsGlobalContext, true);
+        }
+    #endif
+
     jsUndefined = JSValueMakeUndefined(jsGlobalContext);
     JSValueProtect(jsGlobalContext, jsUndefined);
     

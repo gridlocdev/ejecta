@@ -4,6 +4,9 @@
 
 let player, playerColor, sparks = [], presses = 0;
 
+// A ZzFX blip, panned left or right by where it plays
+const blip = new Sound([,,537,.02,.02,.22,1,1.59,-6.98,4.97]);
+
 function gameInit()
 {
     setCameraScale(64);
@@ -25,7 +28,7 @@ function gameUpdate()
     {
         ++presses;
         playerColor = hsl(rand(), .8, .6);
-        zzfx(...[,,537,.02,.02,.22,1,1.59,-6.98,4.97]); // silent until Ejecta has Web Audio
+        blip.play(player);
         for (let i = 40; i--;)
             sparks.push({pos: player, vel: randInCircle(.3), life: 1, color: playerColor});
     }

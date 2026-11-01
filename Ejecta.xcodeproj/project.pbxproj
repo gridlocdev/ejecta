@@ -188,6 +188,10 @@
 		B6F714E81BCF126A0082A90F /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B6CFCCD81332F152001F17AF /* AVFoundation.framework */; };
 		B6F9AFC0169F81D400ABD91A /* EJBindingWindowEvents.m in Sources */ = {isa = PBXBuildFile; fileRef = B6F9AFBF169F81D400ABD91A /* EJBindingWindowEvents.m */; };
 		B870BDE916F2E11A00827F01 /* EJBindingWebGLExtensions.m in Sources */ = {isa = PBXBuildFile; fileRef = B870BDE816F2E11A00827F01 /* EJBindingWebGLExtensions.m */; };
+		EA1D10000000000000000005 /* EJAudioMixerCore.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000002 /* EJAudioMixerCore.c */; };
+		EA1D10000000000000000006 /* EJAudioMixerCore.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000002 /* EJAudioMixerCore.c */; };
+		EA1D10000000000000000007 /* EJBindingAudioMixer.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000004 /* EJBindingAudioMixer.m */; };
+		EA1D10000000000000000008 /* EJBindingAudioMixer.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000004 /* EJBindingAudioMixer.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -362,6 +366,10 @@
 		B6F9AFBF169F81D400ABD91A /* EJBindingWindowEvents.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJBindingWindowEvents.m; sourceTree = "<group>"; };
 		B870BDE716F2E10400827F01 /* EJBindingWebGLExtensions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EJBindingWebGLExtensions.h; path = WebGL/EJBindingWebGLExtensions.h; sourceTree = "<group>"; };
 		B870BDE816F2E11A00827F01 /* EJBindingWebGLExtensions.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EJBindingWebGLExtensions.m; path = WebGL/EJBindingWebGLExtensions.m; sourceTree = "<group>"; };
+		EA1D10000000000000000001 /* EJAudioMixerCore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioMixerCore.h; sourceTree = "<group>"; };
+		EA1D10000000000000000002 /* EJAudioMixerCore.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioMixerCore.c; sourceTree = "<group>"; };
+		EA1D10000000000000000003 /* EJBindingAudioMixer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJBindingAudioMixer.h; sourceTree = "<group>"; };
+		EA1D10000000000000000004 /* EJBindingAudioMixer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJBindingAudioMixer.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -533,6 +541,10 @@
 			children = (
 				B64CE618166682700087CF94 /* EJBindingAudio.h */,
 				B64CE619166682700087CF94 /* EJBindingAudio.m */,
+				EA1D10000000000000000003 /* EJBindingAudioMixer.h */,
+				EA1D10000000000000000004 /* EJBindingAudioMixer.m */,
+				EA1D10000000000000000001 /* EJAudioMixerCore.h */,
+				EA1D10000000000000000002 /* EJAudioMixerCore.c */,
 				B64CE613166682700087CF94 /* EJAudioSource.h */,
 				B64CE614166682700087CF94 /* EJAudioSourceAVAudio.h */,
 				B64CE615166682700087CF94 /* EJAudioSourceAVAudio.m */,
@@ -822,6 +834,8 @@
 				B64CE663166682700087CF94 /* EJAudioSourceAVAudio.m in Sources */,
 				B64CE664166682700087CF94 /* EJAudioSourceOpenAL.m in Sources */,
 				B64CE665166682700087CF94 /* EJBindingAudio.m in Sources */,
+				EA1D10000000000000000007 /* EJBindingAudioMixer.m in Sources */,
+				EA1D10000000000000000005 /* EJAudioMixerCore.c in Sources */,
 				B64CE666166682700087CF94 /* EJOpenALBuffer.m in Sources */,
 				B64CE667166682700087CF94 /* EJSharedOpenALManager.m in Sources */,
 				B6B41FA21BF25A7F0075C00F /* EJBindingGamepadProvider.m in Sources */,
@@ -896,6 +910,8 @@
 				B6F714951BCF126A0082A90F /* EJAudioSourceAVAudio.m in Sources */,
 				B6F714961BCF126A0082A90F /* EJAudioSourceOpenAL.m in Sources */,
 				B6F714971BCF126A0082A90F /* EJBindingAudio.m in Sources */,
+				EA1D10000000000000000008 /* EJBindingAudioMixer.m in Sources */,
+				EA1D10000000000000000006 /* EJAudioMixerCore.c in Sources */,
 				B6F714981BCF126A0082A90F /* EJOpenALBuffer.m in Sources */,
 				B6F714991BCF126A0082A90F /* EJSharedOpenALManager.m in Sources */,
 				B6B41FA31BF25A7F0075C00F /* EJBindingGamepadProvider.m in Sources */,

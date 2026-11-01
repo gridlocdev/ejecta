@@ -58,6 +58,23 @@ _littlejs:
 check seconds="5" *flags:
     node tools/ejecta-sim/sim.mjs App {{seconds}} {{flags}}
 
+# --- Tests that run on any machine ------------------------------------------
+
+# Run every test that doesn't need Xcode (C compiler and Node)
+test: test-mixer test-js
+
+# Build and run the audio mixer's C tests with AddressSanitizer
+test-mixer:
+    mkdir -p {{derived}}
+    cc -std=c11 -Wall -Wextra -O1 -g -fsanitize=address,undefined \
+        -ISource/Ejecta/EJAudio Source/Ejecta/EJAudio/EJAudioMixerCore.c \
+        tools/audio-mixer-test/test.c -lm -lpthread -o {{derived}}/mixer-test
+    {{derived}}/mixer-test
+
+# Check Ejecta.js's Web Audio and fetch() in the API simulator
+test-js:
+    node tools/ejecta-sim/sim.mjs tools/ejecta-sim/tests/webaudio 4
+
 # --- Simulator ----------------------------------------------------------------
 
 # Build for the tvOS Simulator (no signing needed)

@@ -66,6 +66,7 @@
 		// Buttons added to GCExtendedGamepad in iOS/tvOS 12.1 and 13. Modern Xbox,
 		// PlayStation and MFi controllers report these. buttonOptions and the
 		// thumbstick buttons are nil on controllers that don't have them.
+		// The Menu button is Start (9) here, so it isn't also Home (16) below.
 		mapping[kEJGamepadButtonSelect] = gamepad.buttonOptions;
 		mapping[kEJGamepadButtonStart] = gamepad.buttonMenu;
 		mapping[kEJGamepadButtonLeftStick] = gamepad.leftThumbstickButton;
@@ -103,7 +104,11 @@
 	// the "controllerPausedHandler" callback on the controller. So we provide our own
 	// ButtonInput instance that conforms to the same protocol as GCControllerButtonInput.
 	
-	mapping[kEJGamepadButtonHome] = [[EJControllerButtonInputHome alloc] initWithController:controller];
+	// Controllers without a Menu button input (the Siri Remote, older
+	// controllers) report Menu through the paused handler as Home.
+	if( !controller.extendedGamepad.buttonMenu ) {
+		mapping[kEJGamepadButtonHome] = [[EJControllerButtonInputHome alloc] initWithController:controller];
+	}
 	
 	
 	JSValueRef buttonsValues[kEJGamepadNumButtons];

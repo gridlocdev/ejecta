@@ -799,6 +799,18 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 {
 	if( radiusX < 0 || radiusY < 0 ) { return; }
 	
+	// The path picks how many steps an arc gets from the transform's x scale.
+	// Turning the ellipse a quarter and swapping its radii draws the same
+	// points with the longer radius on x, so tall ellipses stay smooth.
+	if( radiusY > radiusX ) {
+		float swap = radiusX;
+		radiusX = radiusY;
+		radiusY = swap;
+		rotation += M_PI_2;
+		startAngle -= M_PI_2;
+		endAngle -= M_PI_2;
+	}
+	
 	// An ellipse is a unit circle arc drawn through a transform that moves,
 	// turns and stretches it. The path takes its points through path.transform,
 	// so swap that in for this arc only; state->transform stays as it was.

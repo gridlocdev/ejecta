@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Runs the LittleJS example against Ejecta's bindings in Node.
+  # Mixer tests, Web Audio tests and the LittleJS example in the API simulator.
   littlejs-check:
     runs-on: ubuntu-latest
     steps:
@@ -15,6 +15,7 @@ jobs:
         with:
           node-version: 22
       - uses: extractions/setup-just@v2
+      - run: just test
       - run: just littlejs-example
       - run: just check 6
 

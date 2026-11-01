@@ -241,7 +241,8 @@ const HttpRequest = nativeClass('HttpRequest', {
 	send() {
 		addTimer(() => {
 			const bytes = loadBytes(this._url);
-			this.status = bytes ? 200 : 404;
+			if (!bytes) { this.readyState = 4; return this._dispatch('error'); }
+			this.status = 200;
 			this.responseText = bytes ? bytes.toString('utf8') : '';
 			this.response = this.responseType === 'arraybuffer' && bytes
 				? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
@@ -271,7 +272,10 @@ const GlobalUtils = nativeClass('GlobalUtils', {
 	screenHeight: SCREEN.height,
 	language: 'en', userAgent: 'Ejecta tvOS (sim)', appVersion: '1.0',
 	platform: 'AppleTV', onLine: true, orientation: 0,
-	log(s) { console.log('  [log] ' + s); },
+	log(s) {
+		console.log('  [log] ' + s);
+		if (/^\w+: FAIL\b/.test(s)) errors.push(s.replace(/^\w+: /, ''));
+	},
 	performanceNow() { return now; },
 	setTimeout(cb, t) { return addTimer(cb, t, false); },
 	setInterval(cb, t) { return addTimer(cb, t, true); },
@@ -286,7 +290,126 @@ const GlobalUtils = nativeClass('GlobalUtils', {
 	openURL() {},
 });
 
-const Ejecta = {GlobalUtils, Canvas, Image, LocalStorage, HttpRequest, GamepadProvider};
+
+// The audio mixer: a port of Source/Ejecta/EJAudio/EJAudioMixerCore.c, so
+// Web Audio code runs through the same math. Output levels are reported.
+const AUDIO_RATE = 48000;
+const audioStats = {voices: 0, peak: 0, ended: 0, decoded: 0, decodeErrors: 0};
+let simMixer = null;
+const AudioMixer = nativeClass('AudioMixer', {
+	sampleRate: AUDIO_RATE,
+	get currentTime() { return this._time; },
+	setBuffer(id, sampleRate, ...channels) {
+		if (!channels.length || channels.some((c) => Object.prototype.toString.call(c) !== '[object Float32Array]')) return false;
+		const length = Math.min(...channels.map((c) => c.length));
+		if (!length || !(sampleRate > 0) || !Number.isFinite(sampleRate)) return false;
+		this._buffers.set(id, {sampleRate, length, channels: channels.slice(0, 2).map((c) => Float32Array.from(c.subarray(0, length)))});
+		return true;
+	},
+	deleteBuffer(id) { this._buffers.delete(id); },
+	play(voice, bufferId, offset, loop, rate, m0, m1, m2, m3) {
+		const buffer = this._buffers.get(bufferId);
+		if (!buffer || this._voices.size >= 64) return false;
+		const finite = (v) => Number.isFinite(v) ? v : 0;
+		let position = finite(offset) > 0 ? offset * buffer.sampleRate : 0;
+		if (loop) position %= buffer.length;
+		this._voices.set(voice, {buffer, position, loop: !!loop, rate: Math.max(finite(rate), 0), m: [m0, m1, m2, m3].map(finite),
+			ended: position >= buffer.length});
+		audioStats.voices++;
+		return true;
+	},
+	update(voice, loop, rate, m0, m1, m2, m3) {
+		const v = this._voices.get(voice);
+		const finite = (x) => Number.isFinite(x) ? x : 0;
+		if (v && !v.ended) Object.assign(v, {loop: !!loop, rate: Math.max(finite(rate), 0), m: [m0, m1, m2, m3].map(finite)});
+	},
+	stop(voice) { const v = this._voices.get(voice); if (v) v.ended = true; },
+	suspend() { this._suspended = true; },
+	resume() { this._suspended = false; },
+	decode(data, callback) {
+		addTimer(() => {
+			const decoded = decodeWav(data);
+			if (decoded) audioStats.decoded++; else audioStats.decodeErrors++;
+			decoded
+				? callback(decoded.sampleRate, decoded.channels.map((c) => run('Float32Array').from(c)))
+				: callback(null, 'the simulator only decodes WAV files');
+		}, 5);
+	},
+	// Render up to the virtual clock, then report ended voices
+	_render(toSeconds) {
+		if (this._suspended) return;
+		const frames = Math.round((toSeconds - this._time) * AUDIO_RATE);
+		if (frames <= 0) return;
+		const L = new Float32Array(frames), R = new Float32Array(frames);
+		for (const v of this._voices.values()) {
+			if (v.ended) continue;
+			const {channels, length, sampleRate} = v.buffer, [inL, inR] = channels;
+			const step = v.rate * sampleRate / AUDIO_RATE, [m0, m1, m2, m3] = v.m;
+			let p = v.position;
+			for (let f = 0; f < frames; f++) {
+				if (p >= length) {
+					if (!v.loop) { v.ended = true; break; }
+					p %= length;
+				}
+				const i0 = p | 0, i1 = i0 + 1 < length ? i0 + 1 : v.loop ? 0 : i0, t = p - i0;
+				const l = inL[i0] + (inL[i1] - inL[i0]) * t;
+				const r = inR ? inR[i0] + (inR[i1] - inR[i0]) * t : 0;
+				L[f] += m0 * l + m1 * r;
+				R[f] += m2 * l + m3 * r;
+				p += step;
+			}
+			if (!v.ended && !v.loop && p >= length) v.ended = true;
+			v.position = p;
+		}
+		for (let f = 0; f < frames; f++)
+			audioStats.peak = Math.max(audioStats.peak, Math.abs(L[f]), Math.abs(R[f]));
+		this._last = {left: L[frames - 1], right: R[frames - 1], frames};
+		this._time += frames / AUDIO_RATE;
+		for (const [id, v] of this._voices) {
+			if (!v.ended) continue;
+			this._voices.delete(id);
+			audioStats.ended++;
+			guard('onvoiceended', () => this.onvoiceended?.(id));
+		}
+	},
+}, function () {
+	Object.assign(this, {_time: 0, _buffers: new Map(), _voices: new Map(), _suspended: false});
+	simMixer = this;
+});
+
+// PCM 8/16/24/32-bit and float WAV
+function decodeWav(data) {
+	const tag = Object.prototype.toString.call(data);
+	const bytes = tag === '[object ArrayBuffer]' ? Buffer.from(new Uint8Array(data))
+		: ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : Buffer.alloc(0);
+	if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') return null;
+	let format, channels, sampleRate, bits, offset = 12;
+	while (offset + 8 <= bytes.length) {
+		const id = bytes.toString('ascii', offset, offset + 4), size = bytes.readUInt32LE(offset + 4);
+		const body = offset + 8;
+		if (id === 'fmt ') {
+			format = bytes.readUInt16LE(body); channels = bytes.readUInt16LE(body + 2);
+			sampleRate = bytes.readUInt32LE(body + 4); bits = bytes.readUInt16LE(body + 14);
+		}
+		else if (id === 'data' && channels) {
+			const width = bits / 8, frames = Math.floor(Math.min(size, bytes.length - body) / (width * channels));
+			const out = Array.from({length: channels}, () => new Float32Array(frames));
+			for (let f = 0; f < frames; f++) for (let c = 0; c < channels; c++) {
+				const at = body + (f * channels + c) * width;
+				out[c][f] = format === 3 ? bytes.readFloatLE(at)
+					: bits === 8 ? (bytes[at] - 128) / 128
+					: bits === 16 ? bytes.readInt16LE(at) / 32768
+					: bits === 24 ? bytes.readIntLE(at, 3) / 8388608
+					: bytes.readInt32LE(at) / 2147483648;
+			}
+			return {sampleRate, channels: out};
+		}
+		offset = body + size + (size & 1);
+	}
+	return null;
+}
+
+const Ejecta = {GlobalUtils, Canvas, Image, LocalStorage, HttpRequest, GamepadProvider, AudioMixer};
 for (const name of ['Audio', 'Video', 'WebSocket', 'Geolocation', 'KeyInput',
 	'TouchInput', 'DeviceMotion', 'WindowEvents'])
 	Ejecta[name] = nativeClass(name);
@@ -341,6 +464,7 @@ for (let frameEnd = 16; now < seconds * 1000; frameEnd += 1000 / 60) {
 	}
 	await new Promise((r) => setImmediate(r));
 	now = Math.max(now, frameEnd);
+	if (simMixer) guard('audio', () => simMixer._render(now / 1000));
 	frameCalls.push(canvasCalls() - before);
 }
 
@@ -353,6 +477,11 @@ for (const [k, n] of top(missing)) console.log(`  ${k}  (${n}x)`);
 if (notImplemented.size) {
 	console.log('\nBound but not implemented by Ejecta:');
 	for (const [k, n] of top(notImplemented)) console.log(`  ${k}  (${n}x)`);
+}
+if (simMixer) {
+	console.log(`\nAudio: ${audioStats.voices} sounds played, ${audioStats.ended} ended, ` +
+		`peak level ${audioStats.peak.toFixed(2)}` +
+		(audioStats.decoded || audioStats.decodeErrors ? `, ${audioStats.decoded} files decoded, ${audioStats.decodeErrors} failed` : ''));
 }
 console.log('\nErrors:');
 if (!errors.length) console.log('  none');

@@ -9,8 +9,8 @@
 // - Fits a fixed size canvas (setCanvasFixedSize) to the screen, centered,
 //   since Ejecta has no CSS layout to do it.
 //
-// Not covered yet: sound. Ejecta has no Web Audio, so LittleJS sees no
-// AudioContext and stays silent; the game still runs.
+// Sound needs nothing here: Ejecta.js provides the Web Audio API and fetch()
+// that LittleJS uses for ZzFX and sound files.
 'use strict';
 (function() {
 	if( typeof setGLEnable !== 'function' ) {
