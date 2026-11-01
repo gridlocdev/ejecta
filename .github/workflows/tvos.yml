@@ -26,5 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: extractions/setup-just@v2
       - run: xcodebuild -version
+      # Report every compile error in one run, not just the first file's
+      - run: defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
       - run: just littlejs-example
       - run: just build-sim
