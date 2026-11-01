@@ -15,7 +15,8 @@
 // Numbers and Date instances.
 
 // JSValueGetTypedArrayPtr() gets the data pointer and byte length from a
-// Typed Array or Array Buffer. 
+// Typed Array or Array Buffer. For a Typed Array the pointer is to the view's
+// first element, its byteOffset into the buffer included. 
 
 #import <Foundation/Foundation.h>
 #import "JavaScriptCore/JavaScriptCore.h"

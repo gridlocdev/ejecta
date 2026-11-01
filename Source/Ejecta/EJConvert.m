@@ -189,7 +189,11 @@ void *JSValueGetTypedArrayPtr( JSContextRef ctx, JSValueRef value, size_t *lengt
 		if (length != NULL) {
 			*length = JSObjectGetTypedArrayByteLength(ctx, (JSObjectRef)value, NULL);
 		}
-		return JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)value, NULL);
+		// JSObjectGetTypedArrayBytesPtr() points at the start of the
+		// underlying ArrayBuffer, not at the view; add the view's offset so
+		// subarray()s and views into a shared buffer read the right bytes
+		char *bytes = JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)value, NULL);
+		return bytes ? bytes + JSObjectGetTypedArrayByteOffset(ctx, (JSObjectRef)value, NULL) : NULL;
 	}
 	
 	if (length != NULL) {

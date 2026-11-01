@@ -1315,7 +1315,7 @@ EJ_BIND_FUNCTION(readPixels, ctx, argc, argv) {
 	
 	scriptView.currentRenderingContext = renderingContext;
 	
-	void *arrayData = JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)argv[6], NULL);
+	void *arrayData = JSValueGetTypedArrayPtr(ctx, argv[6], NULL);
 	glReadPixels(x, y, width, height, format, type, arrayData);
 	return NULL;
 }
