@@ -2,6 +2,7 @@
 #import "EJCanvasContext2D.h"
 
 #include <vector>
+#include "EJPathDash.h"
 
 // We're using the C++ std::vector here to store our points. Boxing and unboxing
 // so many EJVectors to NSValue types seemed wasteful.
@@ -512,6 +513,35 @@ typedef std::vector<subpath_t> path_t;
 		
 		arcP1 = arcP2;
 	}
+}
+
+- (EJPath *)newDashedPathWithPattern:(const float *)pattern count:(int)count offset:(float)offset {
+	EJPath *dashed = [[EJPath alloc] init];
+	dashed.transform = transform;
+	CGAffineTransform inverse = CGAffineTransformInvert(transform);
+	
+	// Points are stored transformed; dash lengths are in user space
+	std::vector<EJVector2> user;
+	std::vector<std::vector<EJVector2>> pieces;
+	for( path_t::iterator sp = paths.begin(); ; ++sp ) {
+		subpath_t &path = sp==paths.end()?currentPath:*sp;
+		if( path.points.size() > 1 ) {
+			user.clear();
+			for( size_t i = 0; i < path.points.size(); i++ ) {
+				user.push_back(EJVector2ApplyTransform(path.points[i], inverse));
+			}
+			pieces.clear();
+			EJDashPolyline(user, pattern, count, offset, pieces);
+			for( size_t p = 0; p < pieces.size(); p++ ) {
+				for( size_t i = 0; i < pieces[p].size(); i++ ) {
+					[dashed push:EJVector2ApplyTransform(pieces[p][i], transform)];
+				}
+				[dashed endSubPath];
+			}
+		}
+		if( sp==paths.end() ) break;
+	}
+	return dashed;
 }
 
 - (void)drawLinesToContext:(EJCanvasContext2D *)context {

@@ -1,14 +1,23 @@
 // Ejecta.AudioMixer is the native half of the Web Audio API in Ejecta.js.
-// It plays sample buffers through EJAudioMixerCore on an AVAudioEngine, and
-// decodes audio files (decodeAudioData). Ejecta.js builds AudioContext and
-// its nodes on top of it; scripts use those, not this class.
+// It plays sample buffers and effect buses through EJAudioMixerCore on an
+// AVAudioEngine, and decodes audio files (decodeAudioData). Ejecta.js builds
+// AudioContext and its nodes on top of it; scripts use those, not this class.
 //
-// JS API:
+// JS API (routes are flat arrays: [target, m0, m1, m2, m3, target, ...] with
+// target 0 for the output or a bus id):
 //   setBuffer(id, sampleRate, channel0 [, channel1])  Float32Arrays, copied
 //   deleteBuffer(id)
-//   play(voiceId, bufferId, offset, loop, rate, m0, m1, m2, m3) -> bool
-//   update(voiceId, loop, rate, m0, m1, m2, m3)
+//   play(voiceId, bufferId, offset, loop, loopStart, loopEnd, rate, routes) -> bool
+//   update(voiceId, loop, loopStart, loopEnd, rate, routes)
 //   stop(voiceId)
+//   setBus(busId, type, maxDelaySeconds, monoInput) -> bool
+//   deleteBus(busId)
+//   setBusParams(busId, [numbers])            see EJAudioMixerCore.h
+//   setBusCurve(busId, Float32Array or null)
+//   setBusImpulse(busId, scale, channel0 [, channel1]) or (busId) to clear
+//   setBusRoutes(busId, routes)
+//   setBusOrder([busIds])
+//   getBusReduction(busId) -> dB
 //   suspend(), resume()
 //   decode(arrayBuffer, callback(sampleRate, [channels...]) or callback(null, error))
 //   sampleRate, currentTime

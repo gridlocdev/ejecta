@@ -1,6 +1,7 @@
 #import "EJBindingAudioMixer.h"
 #import "EJJavaScriptView.h"
 #import "EJNonRetainingProxy.h"
+#import "EJAudioDecodeOgg.h"
 
 #define EJ_AUDIO_MIXER_MAX_VOICES 64
 
@@ -20,6 +21,46 @@
 
 @implementation EJAudioDecodeJob
 @end
+
+
+// Reads up to max numbers from a JS array
+static int EJReadNumbers(JSContextRef ctx, JSValueRef value, double *out, int max) {
+	if( !value || !JSValueIsObject(ctx, value) ) { return 0; }
+	JSObjectRef array = JSValueToObject(ctx, value, NULL);
+	JSStringRef lengthName = JSStringCreateWithUTF8CString("length");
+	int length = (int)JSValueToNumberFast(ctx, JSObjectGetProperty(ctx, array, lengthName, NULL));
+	JSStringRelease(lengthName);
+	int count = MIN(MAX(length, 0), max);
+	for( int i = 0; i < count; i++ ) {
+		out[i] = JSValueToNumberFast(ctx, JSObjectGetPropertyAtIndex(ctx, array, i, NULL));
+	}
+	return count;
+}
+
+// Reads a flat [target, m0, m1, m2, m3, ...] array
+static int EJReadRoutes(JSContextRef ctx, JSValueRef value, EJAudioRoute *routes) {
+	double numbers[EJ_AUDIO_MAX_ROUTES * 5];
+	int count = EJReadNumbers(ctx, value, numbers, EJ_AUDIO_MAX_ROUTES * 5) / 5;
+	for( int i = 0; i < count; i++ ) {
+		double *n = numbers + i * 5;
+		routes[i].target = isfinite(n[0]) ? (int)n[0] : -1;
+		for( int k = 0; k < 4; k++ ) { routes[i].matrix[k] = (float)n[k + 1]; }
+	}
+	return count;
+}
+
+// Float32Array arguments as channel pointers; returns the shortest length
+static int EJReadChannels(JSContextRef ctx, const JSValueRef argv[], int argc, const float **channels) {
+	size_t length = SIZE_MAX;
+	for( int i = 0; i < argc; i++ ) {
+		if( JSValueGetTypedArrayType(ctx, argv[i], NULL) != kJSTypedArrayTypeFloat32Array ) { return 0; }
+		size_t byteLength = 0;
+		channels[i] = JSValueGetTypedArrayPtr(ctx, argv[i], &byteLength);
+		if( !channels[i] ) { return 0; }
+		length = MIN(length, byteLength / sizeof(float));
+	}
+	return (argc > 0 && length < INT_MAX) ? (int)length : 0;
+}
 
 
 @implementation EJBindingAudioMixer
@@ -158,6 +199,26 @@
 + (AVAudioPCMBuffer *)newBufferWithData:(NSData *)data error:(NSString **)errorMessage {
 	const uint8_t *b = data.bytes;
 	NSUInteger n = data.length;
+	
+	// AVAudioFile doesn't read Ogg Vorbis; stb_vorbis does
+	EJDecodedAudio ogg;
+	if( n < INT_MAX && EJAudioDecodeOggVorbis(b, (int)n, &ogg) ) {
+		AVAudioFormat *format = [[AVAudioFormat alloc]
+			initStandardFormatWithSampleRate:ogg.sampleRate channels:(AVAudioChannelCount)ogg.channelCount];
+		AVAudioPCMBuffer *buffer = format
+			? [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:(AVAudioFrameCount)ogg.frames]
+			: nil;
+		if( buffer ) {
+			for( int c = 0; c < ogg.channelCount; c++ ) {
+				memcpy(buffer.floatChannelData[c], ogg.channels[c], ogg.frames * sizeof(float));
+			}
+			buffer.frameLength = (AVAudioFrameCount)ogg.frames;
+		}
+		[format release];
+		EJDecodedAudioFree(&ogg);
+		if( !buffer ) { *errorMessage = @"not enough memory for the decoded audio"; }
+		return buffer;
+	}
 	NSString *extension = @"audio";
 	if( n >= 12 && !memcmp(b, "RIFF", 4) ) { extension = @"wav"; }
 	else if( n >= 4 && !memcmp(b, "OggS", 4) ) { extension = @"ogg"; }
@@ -244,18 +305,10 @@ EJ_BIND_FUNCTION(setBuffer, ctx, argc, argv) {
 	double sampleRate = JSValueToNumberFast(ctx, argv[1]);
 	int channelCount = MIN((int)argc - 2, 2);
 	const float *channels[2] = {NULL, NULL};
-	size_t length = SIZE_MAX;
-	for( int i = 0; i < channelCount; i++ ) {
-		if( JSValueGetTypedArrayType(ctx, argv[i+2], NULL) != kJSTypedArrayTypeFloat32Array ) {
-			return JSValueMakeBoolean(ctx, false);
-		}
-		size_t byteLength = 0;
-		channels[i] = JSValueGetTypedArrayPtr(ctx, argv[i+2], &byteLength);
-		length = MIN(length, byteLength / sizeof(float));
-	}
-
-	BOOL ok = channels[0] && length > 0 && length < INT_MAX &&
-		EJAudioMixerSetBuffer(mixer, bufferId, channels, channelCount, (int)length, sampleRate);
+	int length = EJReadChannels(ctx, argv + 2, channelCount, channels);
+	
+	BOOL ok = length > 0 &&
+		EJAudioMixerSetBuffer(mixer, bufferId, channels, channelCount, length, sampleRate);
 	return JSValueMakeBoolean(ctx, ok);
 }
 
@@ -266,32 +319,32 @@ EJ_BIND_FUNCTION(deleteBuffer, ctx, argc, argv) {
 }
 
 EJ_BIND_FUNCTION(play, ctx, argc, argv) {
-	if( argc < 9 ) { return JSValueMakeBoolean(ctx, false); }
-	float matrix[4];
-	for( int i = 0; i < 4; i++ ) {
-		matrix[i] = JSValueToNumberFast(ctx, argv[i+5]);
-	}
+	if( argc < 8 ) { return JSValueMakeBoolean(ctx, false); }
+	EJAudioRoute routes[EJ_AUDIO_MAX_ROUTES];
+	int routeCount = EJReadRoutes(ctx, argv[7], routes);
 	BOOL ok = EJAudioMixerPlay(mixer,
 		(int)JSValueToNumberFast(ctx, argv[0]),
 		(int)JSValueToNumberFast(ctx, argv[1]),
 		JSValueToNumberFast(ctx, argv[2]),
 		JSValueToBoolean(ctx, argv[3]),
 		JSValueToNumberFast(ctx, argv[4]),
-		matrix);
+		JSValueToNumberFast(ctx, argv[5]),
+		JSValueToNumberFast(ctx, argv[6]),
+		routes, routeCount);
 	return JSValueMakeBoolean(ctx, ok);
 }
 
 EJ_BIND_FUNCTION(update, ctx, argc, argv) {
-	if( argc < 7 ) { return NULL; }
-	float matrix[4];
-	for( int i = 0; i < 4; i++ ) {
-		matrix[i] = JSValueToNumberFast(ctx, argv[i+3]);
-	}
+	if( argc < 6 ) { return NULL; }
+	EJAudioRoute routes[EJ_AUDIO_MAX_ROUTES];
+	int routeCount = EJReadRoutes(ctx, argv[5], routes);
 	EJAudioMixerUpdate(mixer,
 		(int)JSValueToNumberFast(ctx, argv[0]),
 		JSValueToBoolean(ctx, argv[1]),
 		JSValueToNumberFast(ctx, argv[2]),
-		matrix);
+		JSValueToNumberFast(ctx, argv[3]),
+		JSValueToNumberFast(ctx, argv[4]),
+		routes, routeCount);
 	return NULL;
 }
 
@@ -299,6 +352,72 @@ EJ_BIND_FUNCTION(stop, ctx, argc, argv) {
 	if( argc < 1 ) { return NULL; }
 	EJAudioMixerStop(mixer, (int)JSValueToNumberFast(ctx, argv[0]));
 	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBus, ctx, argc, argv) {
+	if( argc < 4 ) { return JSValueMakeBoolean(ctx, false); }
+	BOOL ok = EJAudioMixerSetBus(mixer,
+		(int)JSValueToNumberFast(ctx, argv[0]),
+		(int)JSValueToNumberFast(ctx, argv[1]),
+		JSValueToNumberFast(ctx, argv[2]),
+		JSValueToBoolean(ctx, argv[3]));
+	return JSValueMakeBoolean(ctx, ok);
+}
+
+EJ_BIND_FUNCTION(deleteBus, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	EJAudioMixerDeleteBus(mixer, (int)JSValueToNumberFast(ctx, argv[0]));
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBusParams, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	double params[8];
+	int count = EJReadNumbers(ctx, argv[1], params, 8);
+	EJAudioMixerSetBusParams(mixer, (int)JSValueToNumberFast(ctx, argv[0]), params, count);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBusCurve, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	const float *curve = NULL;
+	int length = argc > 1 ? EJReadChannels(ctx, argv + 1, 1, &curve) : 0;
+	EJAudioMixerSetBusCurve(mixer, (int)JSValueToNumberFast(ctx, argv[0]), length ? curve : NULL, length);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBusImpulse, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	int busId = (int)JSValueToNumberFast(ctx, argv[0]);
+	int channelCount = argc > 2 ? MIN((int)argc - 2, 2) : 0;
+	const float *channels[2] = {NULL, NULL};
+	int length = channelCount ? EJReadChannels(ctx, argv + 2, channelCount, channels) : 0;
+	float scale = argc > 1 ? JSValueToNumberFast(ctx, argv[1]) : 1;
+	EJAudioMixerSetBusImpulse(mixer, busId, length ? channels : NULL, channelCount, length, scale);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBusRoutes, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	EJAudioRoute routes[EJ_AUDIO_MAX_ROUTES];
+	int routeCount = EJReadRoutes(ctx, argv[1], routes);
+	EJAudioMixerSetBusRoutes(mixer, (int)JSValueToNumberFast(ctx, argv[0]), routes, routeCount);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(setBusOrder, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	double numbers[EJ_AUDIO_MAX_BUSES];
+	int ids[EJ_AUDIO_MAX_BUSES];
+	int count = EJReadNumbers(ctx, argv[0], numbers, EJ_AUDIO_MAX_BUSES);
+	for( int i = 0; i < count; i++ ) { ids[i] = isfinite(numbers[i]) ? (int)numbers[i] : 0; }
+	EJAudioMixerSetBusOrder(mixer, ids, count);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getBusReduction, ctx, argc, argv) {
+	if( argc < 1 ) { return JSValueMakeNumber(ctx, 0); }
+	return JSValueMakeNumber(ctx, EJAudioMixerGetBusReduction(mixer, (int)JSValueToNumberFast(ctx, argv[0])));
 }
 
 EJ_BIND_FUNCTION(suspend, ctx, argc, argv) {

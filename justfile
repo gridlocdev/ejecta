@@ -60,20 +60,37 @@ check seconds="5" *flags:
 
 # --- Tests that run on any machine ------------------------------------------
 
-# Run every test that doesn't need Xcode (C compiler and Node)
-test: test-mixer test-js
+# Run every test that doesn't need Xcode (C and C++ compilers and Node)
+test: test-mixer test-canvas test-js
 
-# Build and run the audio mixer's C tests with AddressSanitizer
+# Build and run the audio C tests (mixer, effects, Ogg decoder) with AddressSanitizer
 test-mixer:
     mkdir -p {{derived}}
-    cc -std=c11 -Wall -Wextra -O1 -g -fsanitize=address,undefined \
-        -ISource/Ejecta/EJAudio Source/Ejecta/EJAudio/EJAudioMixerCore.c \
+    cc -std=c11 -Wall -Wextra -O1 -g -fsanitize=address,undefined -ISource/Ejecta/EJAudio \
+        Source/Ejecta/EJAudio/EJAudioMixerCore.c Source/Ejecta/EJAudio/EJAudioEffects.c \
         tools/audio-mixer-test/test.c -lm -lpthread -o {{derived}}/mixer-test
+    cc -std=c11 -Wall -Wextra -O1 -g -fsanitize=address,undefined -ISource/Ejecta/EJAudio \
+        Source/Ejecta/EJAudio/EJAudioEffects.c tools/audio-mixer-test/effects_test.c -lm -o {{derived}}/effects-test
+    cc -std=c11 -O1 -g -fsanitize=address,undefined -ISource/Ejecta/EJAudio \
+        Source/Ejecta/EJAudio/EJAudioDecodeOgg.c tools/audio-mixer-test/ogg_test.c -lm -o {{derived}}/ogg-test
     {{derived}}/mixer-test
+    {{derived}}/effects-test
+    {{derived}}/ogg-test tools/audio-mixer-test/data
+
+# Build and run the canvas C++ tests (dashed lines)
+test-canvas:
+    mkdir -p {{derived}}
+    c++ -std=c++11 -Wall -Wextra -O1 -g -fsanitize=address,undefined -ISource/Ejecta/EJCanvas/2D \
+        tools/canvas-test/dash_test.cpp -o {{derived}}/dash-test
+    {{derived}}/dash-test
 
 # Check Ejecta.js's Web Audio and fetch() in the API simulator
 test-js:
-    node tools/ejecta-sim/sim.mjs tools/ejecta-sim/tests/webaudio 4
+    node tools/ejecta-sim/sim.mjs tools/ejecta-sim/tests/webaudio 8
+
+# Rebuild the simulator's WebAssembly copy of the audio C code (needs LLVM clang with wasm32 and wasm-ld)
+build-wasm:
+    tools/ejecta-sim/wasm/build.sh
 
 # --- Simulator ----------------------------------------------------------------
 

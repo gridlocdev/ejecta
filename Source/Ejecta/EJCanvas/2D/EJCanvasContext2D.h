@@ -78,6 +78,8 @@ extern const EJCompositeOperationFunc EJCompositeOperationFuncs[];
 @protocol EJFillable
 @end
 
+#define EJ_CANVAS_LINE_DASH_MAX 32
+
 typedef struct {
 	CGAffineTransform transform;
 	
@@ -92,6 +94,12 @@ typedef struct {
 	EJLineCap lineCap;
 	EJLineJoin lineJoin;
 	float miterLimit;
+	
+	// setLineDash(): lengths alternating on and off, already repeated to an
+	// even count; 0 entries draws solid lines
+	float lineDash[EJ_CANVAS_LINE_DASH_MAX];
+	int lineDashCount;
+	float lineDashOffset;
 	
 	EJTextAlign textAlign;
 	EJTextBaseline textBaseline;
@@ -209,6 +217,7 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 - (void)closePath;
 - (void)fill:(EJPathFillRule)fillRule;
 - (void)stroke;
+- (void)strokePath:(EJPath *)path;
 - (void)moveToX:(float)x y:(float)y;
 - (void)lineToX:(float)x y:(float)y;
 - (void)rectX:(float)x y:(float)y w:(float)w h:(float)h;

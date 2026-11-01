@@ -114,6 +114,93 @@ async function run() {
 	await wait(100);
 	check('resume', ctx.currentTime > t && ctx.state === 'running');
 
+	// Loop points
+	var steps = ctx.createBuffer(1, 4410, 44100);
+	steps.getChannelData(0).fill(.2, 0, 2205);
+	steps.getChannelData(0).fill(.8, 2205);
+	source = play(steps, [], function( s ) { s.loop = true; s.loopStart = .05; s.loopEnd = .1; });
+	await wait(200);
+	check('loops between loopStart and loopEnd', near(level().left, .8), JSON.stringify(level()));
+	source.stop();
+
+	// Effects
+	var tone = function( hz ) {
+		var b = ctx.createBuffer(1, 44100, 44100), d = b.getChannelData(0);
+		for( var i = 0; i < d.length; i++ ) { d[i] = Math.sin(2 * Math.PI * hz * i / 44100); }
+		return b;
+	};
+	var peakOver = async function( ms ) {
+		var peak = 0;
+		for( var t = 0; t < ms; t += 16 ) { await wait(16); peak = Math.max(peak, Math.abs(level().left)); }
+		return peak;
+	};
+	var lowpass = new BiquadFilterNode(ctx, {type: 'lowpass', frequency: 500});
+	source = play(tone(8000), [lowpass], function( s ) { s.loop = true; });
+	await wait(50);
+	check('lowpass stops 8 kHz', await peakOver(200) < .05);
+	lowpass.frequency.value = 20000;
+	await wait(50);
+	check('raising the cutoff lets it through', await peakOver(200) > .5);
+	source.stop();
+
+	var magnitude = new Float32Array(2), phase = new Float32Array(2);
+	lowpass.frequency.value = 500;
+	lowpass.getFrequencyResponse(new Float32Array([100, 10000]), magnitude, phase);
+	check('getFrequencyResponse', Math.abs(magnitude[0] - 1) < .05 && magnitude[1] < .01,
+		magnitude[0] + ' ' + magnitude[1]);
+
+	var shaper = ctx.createWaveShaper();
+	shaper.curve = new Float32Array([-.5, .5]);
+	source = play(constantBuffer([1], 1), [shaper]);
+	await wait(50);
+	check('wave shaper', near(level().left, .5), JSON.stringify(level()));
+	source.stop();
+
+	var compressor = ctx.createDynamicsCompressor();
+	source = play(tone(200), [compressor], function( s ) { s.loop = true; });
+	await wait(200);
+	check('compressor reduces a loud signal', compressor.reduction < -10, compressor.reduction);
+	source.stop();
+
+	var convolver = new ConvolverNode(ctx, {disableNormalization: true});
+	var impulse = ctx.createBuffer(2, 100, ctx.sampleRate);
+	impulse.getChannelData(0)[0] = 1;   // left: as is
+	impulse.getChannelData(1)[0] = .5;  // right: half
+	convolver.buffer = impulse;
+	source = play(constantBuffer([.4], 1), [convolver]);
+	await wait(100);
+	check('convolver spreads mono to its stereo impulse', near(level().left, .4) && near(level().right, .2), JSON.stringify(level()));
+	source.stop();
+	await wait(100);
+	check('convolver tail ends', near(level().left, 0));
+
+	// An echo: delay with feedback through a gain, as LittleJS's AudioDelay does
+	var delay = ctx.createDelay(1), feedback = ctx.createGain();
+	delay.delayTime.value = .1;
+	feedback.gain.value = .5;
+	delay.connect(feedback).connect(delay);
+	delay.connect(ctx.destination);
+	source = ctx.createBufferSource();
+	source.buffer = constantBuffer([1], .05);
+	source.connect(delay);
+	var t0 = ctx.currentTime;
+	source.start();
+	var echoes = [];
+	while( ctx.currentTime - t0 < .45 ) { await wait(5); echoes.push([ctx.currentTime - t0, level().left]); }
+	var at = function( t ) {
+		var best = echoes.reduce(function( a, b ) { return Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a; });
+		return best[1];
+	};
+	check('delay: first echo', near(at(.125), 1), at(.125));
+	check('delay: feedback echo at half', near(at(.23), .5), at(.23));
+	check('delay: third echo at a quarter', near(at(.335), .25), at(.335));
+	delay.disconnect();
+
+	var oggResponse = await fetch('tone.ogg');
+	var ogg = await ctx.decodeAudioData(await oggResponse.arrayBuffer());
+	check('decodes Ogg Vorbis', ogg.numberOfChannels === 2 && Math.abs(ogg.length - 22050) < 200 && ogg.sampleRate === 44100,
+		ogg.numberOfChannels + ' ' + ogg.length + ' ' + ogg.sampleRate);
+
 	var response = await fetch('data.json');
 	var json = await response.json();
 	check('fetch json', response.ok && json.hello === 'ejecta');
@@ -127,4 +214,4 @@ async function run() {
 
 var done = false;
 run().then(function() { done = true; }, function( e ) { console.log('FAIL exception ' + e + ' ' + e.stack); });
-setTimeout(function() { if( !done ) { console.log('FAIL tests did not finish'); } }, 3500);
+setTimeout(function() { if( !done ) { console.log('FAIL tests did not finish'); } }, 7500);

@@ -192,6 +192,10 @@
 		EA1D10000000000000000006 /* EJAudioMixerCore.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000002 /* EJAudioMixerCore.c */; };
 		EA1D10000000000000000007 /* EJBindingAudioMixer.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000004 /* EJBindingAudioMixer.m */; };
 		EA1D10000000000000000008 /* EJBindingAudioMixer.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000004 /* EJBindingAudioMixer.m */; };
+		EA1D10000000000000000067 /* EJAudioEffects.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000066 /* EJAudioEffects.c */; };
+		EA1D10000000000000000068 /* EJAudioEffects.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000066 /* EJAudioEffects.c */; };
+		EA1D1000000000000000006B /* EJAudioDecodeOgg.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000006A /* EJAudioDecodeOgg.c */; };
+		EA1D1000000000000000006C /* EJAudioDecodeOgg.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000006A /* EJAudioDecodeOgg.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -370,6 +374,11 @@
 		EA1D10000000000000000002 /* EJAudioMixerCore.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioMixerCore.c; sourceTree = "<group>"; };
 		EA1D10000000000000000003 /* EJBindingAudioMixer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJBindingAudioMixer.h; sourceTree = "<group>"; };
 		EA1D10000000000000000004 /* EJBindingAudioMixer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJBindingAudioMixer.m; sourceTree = "<group>"; };
+		EA1D10000000000000000065 /* EJAudioEffects.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioEffects.h; sourceTree = "<group>"; };
+		EA1D10000000000000000066 /* EJAudioEffects.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioEffects.c; sourceTree = "<group>"; };
+		EA1D10000000000000000069 /* EJAudioDecodeOgg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioDecodeOgg.h; sourceTree = "<group>"; };
+		EA1D1000000000000000006A /* EJAudioDecodeOgg.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioDecodeOgg.c; sourceTree = "<group>"; };
+		EA1D1000000000000000006D /* EJPathDash.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJPathDash.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -545,6 +554,10 @@
 				EA1D10000000000000000004 /* EJBindingAudioMixer.m */,
 				EA1D10000000000000000001 /* EJAudioMixerCore.h */,
 				EA1D10000000000000000002 /* EJAudioMixerCore.c */,
+				EA1D10000000000000000065 /* EJAudioEffects.h */,
+				EA1D10000000000000000066 /* EJAudioEffects.c */,
+				EA1D10000000000000000069 /* EJAudioDecodeOgg.h */,
+				EA1D1000000000000000006A /* EJAudioDecodeOgg.c */,
 				B64CE613166682700087CF94 /* EJAudioSource.h */,
 				B64CE614166682700087CF94 /* EJAudioSourceAVAudio.h */,
 				B64CE615166682700087CF94 /* EJAudioSourceAVAudio.m */,
@@ -692,6 +705,7 @@
 				B630048716C1A1960036D8D4 /* EJBindingTextMetrics.h */,
 				B630048816C1A1960036D8D4 /* EJBindingTextMetrics.m */,
 				B6F114F81676BD40001F1324 /* EJPath.h */,
+				EA1D1000000000000000006D /* EJPathDash.h */,
 				B6F114F91676BD40001F1324 /* EJPath.mm */,
 				B6F115021676BDB3001F1324 /* EJCanvas2DTypes.h */,
 				B6F115041676BE18001F1324 /* EJConvertColorRGBA.h */,
@@ -836,6 +850,8 @@
 				B64CE665166682700087CF94 /* EJBindingAudio.m in Sources */,
 				EA1D10000000000000000007 /* EJBindingAudioMixer.m in Sources */,
 				EA1D10000000000000000005 /* EJAudioMixerCore.c in Sources */,
+				EA1D10000000000000000067 /* EJAudioEffects.c in Sources */,
+				EA1D1000000000000000006B /* EJAudioDecodeOgg.c in Sources */,
 				B64CE666166682700087CF94 /* EJOpenALBuffer.m in Sources */,
 				B64CE667166682700087CF94 /* EJSharedOpenALManager.m in Sources */,
 				B6B41FA21BF25A7F0075C00F /* EJBindingGamepadProvider.m in Sources */,
@@ -912,6 +928,8 @@
 				B6F714971BCF126A0082A90F /* EJBindingAudio.m in Sources */,
 				EA1D10000000000000000008 /* EJBindingAudioMixer.m in Sources */,
 				EA1D10000000000000000006 /* EJAudioMixerCore.c in Sources */,
+				EA1D10000000000000000068 /* EJAudioEffects.c in Sources */,
+				EA1D1000000000000000006C /* EJAudioDecodeOgg.c in Sources */,
 				B6F714981BCF126A0082A90F /* EJOpenALBuffer.m in Sources */,
 				B6F714991BCF126A0082A90F /* EJSharedOpenALManager.m in Sources */,
 				B6B41FA31BF25A7F0075C00F /* EJBindingGamepadProvider.m in Sources */,

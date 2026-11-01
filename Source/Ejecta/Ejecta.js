@@ -702,21 +702,26 @@ window.fetch = function( input, init ) {
 
 // Web Audio API
 
-// A subset that covers what 2D game engines use: AudioContext, AudioBuffer,
-// AudioBufferSourceNode, GainNode, StereoPannerNode, AudioParam automation
-// and decodeAudioData(). Samples are mixed natively by Ejecta.AudioMixer.
+// A subset that covers what games use: AudioContext, AudioBuffer,
+// AudioBufferSourceNode, GainNode, StereoPannerNode, BiquadFilterNode,
+// DelayNode, WaveShaperNode, DynamicsCompressorNode, ConvolverNode,
+// AudioParam automation and decodeAudioData(). Ejecta.AudioMixer does the
+// mixing and the effects natively.
 //
-// The graph is not run node by node. For each playing source, the gains and
-// panners on its paths to the destination are folded into one 2x2 matrix and
-// a rate, which the mixer applies. Filter, delay, compressor, convolver and
-// wave shaper nodes can be created and connected, but pass sound through
-// unchanged. Connecting a node to an AudioParam has no effect.
+// The graph isn't run node by node. Gains and stereo panners are folded into
+// 2x2 matrices on the routes between sources, effect buses and the output.
+// Each effect node is a bus in the mixer. Feedback loops through a delay
+// work, one render block (128 frames) later than the delay time.
+// AnalyserNode reports silence, and connecting to an AudioParam does nothing.
 
 var audioMixer = null;
 var audioSources = {}; // playing AudioBufferSourceNodes by voice id
 var audioNextVoiceId = 1;
 var audioNextBufferId = 1;
+var audioNextBusId = 1;
 var audioBufferRegistry = null;
+var audioBusRegistry = null;
+var audioBusRefs = new Set(); // WeakRefs to effect nodes with a bus
 
 var getAudioMixer = function() {
 	if( !audioMixer ) {
@@ -728,11 +733,15 @@ var getAudioMixer = function() {
 				source._ended();
 			}
 		};
-		// Free the native copy of an AudioBuffer's samples once the buffer
-		// is garbage collected. A voice playing them keeps its own reference.
+		// Free the native side of buffers and effect nodes once they are
+		// garbage collected. A voice playing a buffer keeps its own copy.
 		if( typeof FinalizationRegistry !== 'undefined' ) {
 			audioBufferRegistry = new FinalizationRegistry(function( bufferId ) {
 				audioMixer.deleteBuffer(bufferId);
+			});
+			audioBusRegistry = new FinalizationRegistry(function( busId ) {
+				audioMixer.deleteBus(busId);
+				audioMarkDirty();
 			});
 		}
 	}
@@ -741,6 +750,14 @@ var getAudioMixer = function() {
 
 var audioAsync = function( callback ) {
 	Promise.resolve().then(callback);
+};
+
+var audioSameNumbers = function( a, b ) {
+	if( !a || !b || a.length !== b.length ) { return false; }
+	for( var i = 0; i < a.length; i++ ) {
+		if( a[i] !== b[i] ) { return false; }
+	}
+	return true;
 };
 
 // Event target behaviour for contexts and source nodes
@@ -768,8 +785,8 @@ var audioEventTarget = function( proto ) {
 };
 
 
-// Changes to gains, pans, rates and connections are pushed to the mixer once
-// per frame. Params with a ramp running keep it going until the ramp ends.
+// Changes to the graph and to params are sent to the mixer once per frame.
+// Params with a ramp running keep it going until the ramp ends.
 var audioGraphDirty = false;
 var audioGraphTimer = 0;
 var audioAutomating = new Set();
@@ -782,18 +799,138 @@ var audioMarkDirty = function() {
 };
 
 var audioFlush = function() {
+	ej.clearTimeout(audioGraphTimer);
 	audioGraphTimer = 0;
 	audioAutomating.forEach(function( param ) {
 		if( !param._automating() ) { audioAutomating.delete(param); }
 	});
-	for( var id in audioSources ) {
-		audioSources[id]._push();
-	}
+	if( audioMixer ) { audioCompile(); }
 	audioGraphDirty = false;
 	if( audioAutomating.size ) {
 		audioGraphTimer = ej.setTimeout(audioFlush, 16);
 	}
 };
+
+
+// Graph compiler
+//
+// A signal on its way through gains and panners is {mono, m}: for mono, m[0]
+// is the gain on the one channel; for stereo, m is the 2x2 matrix from the
+// left and right it started with to the current left and right.
+
+var audioIdentity = function( mono ) {
+	return mono ? {mono: true, m: [1, 0, 0, 0]} : {mono: false, m: [1, 0, 0, 1]};
+};
+
+// Follows a node's outputs through gains and panners to the effect buses and
+// the destination it reaches. Calls arrive(target node, signal) for each.
+var audioTrace = function( node, signal, arrive ) {
+	var visit = function( n, s, depth ) {
+		if( depth > 64 ) { return; } // a loop without an effect node
+		if( n instanceof AudioDestinationNode || n._busType !== undefined ) {
+			arrive(n, s);
+			return;
+		}
+		s = n._process(s);
+		for( var i = 0; i < n._outputs.length; i++ ) {
+			visit(n._outputs[i], s, depth + 1);
+		}
+	};
+	for( var i = 0; i < node._outputs.length; i++ ) {
+		visit(node._outputs[i], signal, 1);
+	}
+};
+
+// Routes as the mixer takes them: [target, m0, m1, m2, m3, ...]. Paths to
+// the same target add up.
+var audioRoutes = function( node, signal ) {
+	var byTarget = new Map();
+	audioTrace(node, signal, function( target, s ) {
+		var id = target instanceof AudioDestinationNode ? 0 : target._busId;
+		var m = s.m, mono = target instanceof AudioDestinationNode ? false : target._mono;
+		var matrix = s.mono
+			? (mono ? [m[0], 0, 0, 0] : [m[0], 0, m[0], 0])
+			: m;
+		var sum = byTarget.get(id);
+		if( !sum ) { byTarget.set(id, matrix.slice()); }
+		else { for( var i = 0; i < 4; i++ ) { sum[i] += matrix[i]; } }
+	});
+	var routes = [];
+	byTarget.forEach(function( m, id ) {
+		routes.push(id, m[0], m[1], m[2], m[3]);
+	});
+	return routes.slice(0, 16 * 5);
+};
+
+var audioBusOutput = function( bus ) {
+	return audioIdentity(bus._mono && !bus._stereoOutput());
+};
+
+var audioCompile = function() {
+	var mixer = audioMixer;
+
+	// Live effect nodes
+	var buses = [];
+	audioBusRefs.forEach(function( ref ) {
+		var node = ref.deref();
+		if( node ) { buses.push(node); }
+		else { audioBusRefs.delete(ref); }
+	});
+	var sources = [];
+	for( var id in audioSources ) { sources.push(audioSources[id]); }
+
+	// Which buses only ever get a mono signal. Start with all mono and turn
+	// a bus stereo when anything stereo arrives, until nothing changes.
+	buses.forEach(function( bus ) { bus._mono = true; });
+	var markStereo = function( target, s ) {
+		if( !s.mono && target._busType !== undefined && target._mono ) {
+			target._mono = false;
+			changed = true;
+		}
+	};
+	var changed = true;
+	for( var pass = 0; changed && pass <= buses.length + 1; pass++ ) {
+		changed = false;
+		sources.forEach(function( source ) { audioTrace(source, source._startSignal(), markStereo); });
+		buses.forEach(function( bus ) { audioTrace(bus, audioBusOutput(bus), markStereo); });
+	}
+
+	// Buses, their settings and routes
+	var edges = new Map();
+	buses.forEach(function( bus ) {
+		bus._sync(mixer);
+		var routes = audioRoutes(bus, audioBusOutput(bus));
+		if( !audioSameNumbers(routes, bus._pushedRoutes) ) {
+			mixer.setBusRoutes(bus._busId, routes);
+			bus._pushedRoutes = routes;
+		}
+		var targets = [];
+		for( var i = 0; i < routes.length; i += 5 ) {
+			if( routes[i] ) { targets.push(routes[i]); }
+		}
+		edges.set(bus._busId, targets);
+	});
+
+	// Run order: each bus before the buses it sends to, except around a
+	// loop, where the feedback waits a block
+	var order = [], state = new Map();
+	var visit = function( id ) {
+		if( state.has(id) ) { return; } // done, or on the path: a loop
+		state.set(id, 1);
+		(edges.get(id) || []).forEach(visit);
+		order.push(id);
+	};
+	buses.forEach(function( bus ) { visit(bus._busId); });
+	order.reverse();
+	if( !audioSameNumbers(order, audioCompile._order) ) {
+		mixer.setBusOrder(order);
+		audioCompile._order = order;
+	}
+
+	// Playing sources
+	sources.forEach(function( source ) { source._push(); });
+};
+audioCompile._order = null;
 
 
 // AudioParam
@@ -861,7 +998,8 @@ AudioParam.prototype._schedule = function( type, value, time ) {
 
 Object.defineProperty(AudioParam.prototype, 'value', {
 	get: function() {
-		return this._events.length ? this._valueAt(this._context.currentTime) : this._value;
+		var value = this._events.length ? this._valueAt(this._context.currentTime) : this._value;
+		return Math.min(Math.max(value, this.minValue), this.maxValue);
 	},
 	set: function( value ) {
 		value = +value;
@@ -909,10 +1047,6 @@ AudioParam.prototype.cancelAndHoldAtTime = function( time ) {
 
 
 // AudioNode
-//
-// A signal on its way to the destination is {mono, m}: for mono, m[0] is
-// the gain on the one channel; for stereo, m is the 2x2 matrix from the
-// buffer's left and right to the current left and right.
 
 var AudioNode = window.AudioNode = function( context, inputs, outputs ) {
 	this.context = context;
@@ -940,7 +1074,13 @@ AudioNode.prototype.connect = function( destination ) {
 AudioNode.prototype.disconnect = function( destination ) {
 	if( destination instanceof AudioNode ) {
 		var index = this._outputs.indexOf(destination);
-		if( index >= 0 ) { this._outputs.splice(index, 1); }
+		if( index < 0 ) {
+			// As in browsers, which scripts rely on to tell if it was connected
+			var error = new Error('InvalidAccessError: not connected to that node');
+			error.name = 'InvalidAccessError';
+			throw error;
+		}
+		this._outputs.splice(index, 1);
 	}
 	else if( !(destination instanceof AudioParam) ) {
 		this._outputs = []; // disconnect() or disconnect(outputIndex)
@@ -958,12 +1098,14 @@ var audioSubclass = function( name, parent, init, proto ) {
 		if( !(context instanceof BaseAudioContext) ) {
 			throw new TypeError(name + ': the first argument must be an AudioContext');
 		}
-		parent.call(this, context);
+		parent.call(this, context, options);
 		init.call(this, context, options || {});
 	};
 	cls.prototype = Object.create(parent.prototype);
 	cls.prototype.constructor = cls;
-	for( var key in proto || {} ) { cls.prototype[key] = proto[key]; }
+	for( var key in proto || {} ) {
+		Object.defineProperty(cls.prototype, key, Object.getOwnPropertyDescriptor(proto, key));
+	}
 	return cls;
 };
 
@@ -986,7 +1128,7 @@ audioSubclass('StereoPannerNode', AudioNode, function( context, options ) {
 }, {
 	// Equal power panning, as the Web Audio spec defines it
 	_process: function( signal ) {
-		var pan = Math.min(Math.max(this.pan.value, -1), 1), m = signal.m;
+		var pan = this.pan.value, m = signal.m;
 		if( signal.mono ) {
 			var x = (pan + 1) / 2;
 			return {mono: false, m: [
@@ -1009,38 +1151,6 @@ audioSubclass('StereoPannerNode', AudioNode, function( context, options ) {
 	}
 });
 
-// Accepted so effect chains can be built, but they pass sound through as is
-audioSubclass('BiquadFilterNode', AudioNode, function( context, options ) {
-	this.type = options.type || 'lowpass';
-	this.frequency = new AudioParam(context, options.frequency === undefined ? 350 : options.frequency);
-	this.detune = new AudioParam(context, options.detune || 0);
-	this.Q = new AudioParam(context, options.Q === undefined ? 1 : options.Q);
-	this.gain = new AudioParam(context, options.gain || 0);
-}, {
-	getFrequencyResponse: function( frequencies, magnitude, phase ) {
-		magnitude.fill(1);
-		phase.fill(0);
-	}
-});
-audioSubclass('DelayNode', AudioNode, function( context, options ) {
-	this.delayTime = new AudioParam(context, options.delayTime || 0, 0, options.maxDelayTime || 1);
-});
-audioSubclass('DynamicsCompressorNode', AudioNode, function( context, options ) {
-	this.threshold = new AudioParam(context, options.threshold === undefined ? -24 : options.threshold);
-	this.knee = new AudioParam(context, options.knee === undefined ? 30 : options.knee);
-	this.ratio = new AudioParam(context, options.ratio === undefined ? 12 : options.ratio);
-	this.attack = new AudioParam(context, options.attack === undefined ? .003 : options.attack);
-	this.release = new AudioParam(context, options.release === undefined ? .25 : options.release);
-	this.reduction = 0;
-});
-audioSubclass('ConvolverNode', AudioNode, function( context, options ) {
-	this.buffer = options.buffer || null;
-	this.normalize = !options.disableNormalization;
-});
-audioSubclass('WaveShaperNode', AudioNode, function( context, options ) {
-	this.curve = options.curve || null;
-	this.oversample = options.oversample || 'none';
-});
 audioSubclass('AnalyserNode', AudioNode, function( context, options ) {
 	this.fftSize = options.fftSize || 2048;
 	this.minDecibels = -100;
@@ -1051,11 +1161,220 @@ audioSubclass('AnalyserNode', AudioNode, function( context, options ) {
 	getByteFrequencyData: function( array ) { array.fill(0); },
 	getFloatFrequencyData: function( array ) { array.fill(-Infinity); },
 	getByteTimeDomainData: function( array ) { array.fill(128); },
-	getFloatTimeDomainData: function( array ) { array.fill(0); }
+	getFloatTimeDomainData: function( array ) { array.fill(0); },
+	get frequencyBinCount() { return this.fftSize / 2; }
 });
-Object.defineProperty(window.AnalyserNode.prototype, 'frequencyBinCount', {
-	get: function() { return this.fftSize / 2; }
+
+
+// Effect nodes: each is a bus in the mixer
+
+var AudioEffectNode = function( context, options ) {
+	AudioNode.call(this, context);
+	this._busId = audioNextBusId++;
+	this._mono = true;
+	this._pushedBus = null;
+	this._pushedParams = null;
+	this._pushedRoutes = null;
+	audioBusRefs.add(new WeakRef(this));
+	getAudioMixer();
+	if( audioBusRegistry ) { audioBusRegistry.register(this, this._busId); }
+	audioMarkDirty();
+};
+AudioEffectNode.prototype = Object.create(AudioNode.prototype);
+
+AudioEffectNode.prototype._maxDelay = function() { return 0; };
+AudioEffectNode.prototype._params = function() { return []; };
+AudioEffectNode.prototype._stereoOutput = function() { return false; };
+AudioEffectNode.prototype._syncData = function() {};
+
+// Sends the bus's type, input layout and parameters if they changed
+AudioEffectNode.prototype._sync = function( mixer ) {
+	var bus = [this._busType, this._maxDelay(), this._mono ? 1 : 0];
+	if( !audioSameNumbers(bus, this._pushedBus) ) {
+		var typeChanged = !this._pushedBus;
+		mixer.setBus(this._busId, bus[0], bus[1], bus[2]);
+		this._pushedBus = bus;
+		if( typeChanged ) { this._dataDirty = true; }
+	}
+	var params = this._params();
+	if( !audioSameNumbers(params, this._pushedParams) ) {
+		mixer.setBusParams(this._busId, params);
+		this._pushedParams = params;
+	}
+	if( this._dataDirty ) {
+		this._syncData(mixer);
+		this._dataDirty = false;
+	}
+};
+
+var audioEffect = function( name, type, init, proto ) {
+	var cls = audioSubclass(name, AudioEffectNode, init, proto);
+	cls.prototype._busType = type;
+	return cls;
+};
+
+var audioBiquadTypes = ['lowpass', 'highpass', 'bandpass', 'lowshelf', 'highshelf', 'peaking', 'notch', 'allpass'];
+
+audioEffect('BiquadFilterNode', 1, function( context, options ) {
+	this._type = audioBiquadTypes.indexOf(options.type) >= 0 ? options.type : 'lowpass';
+	this.frequency = new AudioParam(context, options.frequency === undefined ? 350 : options.frequency, 0, context.sampleRate / 2);
+	this.detune = new AudioParam(context, options.detune || 0);
+	this.Q = new AudioParam(context, options.Q === undefined ? 1 : options.Q);
+	this.gain = new AudioParam(context, options.gain || 0);
+}, {
+	get type() { return this._type; },
+	set type( type ) {
+		if( audioBiquadTypes.indexOf(type) >= 0 ) { this._type = type; audioMarkDirty(); }
+	},
+	_params: function() {
+		return [audioBiquadTypes.indexOf(this._type), this.frequency.value, this.Q.value, this.gain.value, this.detune.value];
+	},
+	// Magnitude and phase of the filter as set now, at the given frequencies
+	getFrequencyResponse: function( frequencies, magnitude, phase ) {
+		var c = audioBiquadCoefficients(this._params(), this.context.sampleRate);
+		for( var i = 0; i < frequencies.length; i++ ) {
+			var f = frequencies[i];
+			if( !(f >= 0 && f <= this.context.sampleRate / 2) ) {
+				magnitude[i] = phase[i] = NaN;
+				continue;
+			}
+			var w = 2 * Math.PI * f / this.context.sampleRate;
+			var cos1 = Math.cos(w), sin1 = Math.sin(w), cos2 = Math.cos(2 * w), sin2 = Math.sin(2 * w);
+			var nr = c[0] + c[1] * cos1 + c[2] * cos2, ni = -(c[1] * sin1 + c[2] * sin2);
+			var dr = 1 + c[3] * cos1 + c[4] * cos2, di = -(c[3] * sin1 + c[4] * sin2);
+			var d = dr * dr + di * di;
+			var re = (nr * dr + ni * di) / d, im = (ni * dr - nr * di) / d;
+			magnitude[i] = Math.sqrt(re * re + im * im);
+			phase[i] = Math.atan2(im, re);
+		}
+	}
 });
+
+// The same coefficients as EJBiquadSetup() in EJAudioEffects.c: b0, b1, b2, a1, a2
+var audioBiquadCoefficients = function( p, sampleRate ) {
+	var type = p[0], nyquist = sampleRate / 2;
+	var f0 = p[1] * Math.pow(2, p[4] / 1200), Q = p[2], gain = p[3];
+	if( f0 >= nyquist ) {
+		var b = (type === 1 || type === 2) ? 0 : type === 3 ? Math.pow(10, gain / 20) : 1;
+		return [b, 0, 0, 0, 0];
+	}
+	if( f0 <= 0 ) {
+		var b = (type === 0 || type === 2) ? 0 : type === 4 ? Math.pow(10, gain / 20) : 1;
+		return [b, 0, 0, 0, 0];
+	}
+	var w0 = 2 * Math.PI * f0 / sampleRate, cos = Math.cos(w0), sin = Math.sin(w0);
+	var A = Math.pow(10, gain / 40), q = Math.max(Q, 1e-4);
+	var aQ = sin / (2 * q), aQdB = sin / (2 * Math.pow(10, Q / 20)), s = 2 * Math.sqrt(A) * sin / 2 * Math.SQRT2;
+	var c;
+	switch( type ) {
+		case 0: c = [(1-cos)/2, 1-cos, (1-cos)/2, 1+aQdB, -2*cos, 1-aQdB]; break;
+		case 1: c = [(1+cos)/2, -(1+cos), (1+cos)/2, 1+aQdB, -2*cos, 1-aQdB]; break;
+		case 2: c = [aQ, 0, -aQ, 1+aQ, -2*cos, 1-aQ]; break;
+		case 3: c = [A*((A+1)-(A-1)*cos+s), 2*A*((A-1)-(A+1)*cos), A*((A+1)-(A-1)*cos-s),
+			(A+1)+(A-1)*cos+s, -2*((A-1)+(A+1)*cos), (A+1)+(A-1)*cos-s]; break;
+		case 4: c = [A*((A+1)+(A-1)*cos+s), -2*A*((A-1)+(A+1)*cos), A*((A+1)+(A-1)*cos-s),
+			(A+1)-(A-1)*cos+s, 2*((A-1)-(A+1)*cos), (A+1)-(A-1)*cos-s]; break;
+		case 5: c = [1+aQ*A, -2*cos, 1-aQ*A, 1+aQ/A, -2*cos, 1-aQ/A]; break;
+		case 6: c = [1, -2*cos, 1, 1+aQ, -2*cos, 1-aQ]; break;
+		default: c = [1-aQ, -2*cos, 1+aQ, 1+aQ, -2*cos, 1-aQ]; break;
+	}
+	return [c[0]/c[3], c[1]/c[3], c[2]/c[3], c[4]/c[3], c[5]/c[3]];
+};
+
+audioEffect('DelayNode', 2, function( context, options ) {
+	this._maxDelayTime = Math.min(Math.max(options.maxDelayTime || 1, 0), 180);
+	this.delayTime = new AudioParam(context, options.delayTime || 0, 0, this._maxDelayTime);
+}, {
+	_maxDelay: function() { return this._maxDelayTime; },
+	_params: function() { return [this.delayTime.value]; }
+});
+
+audioEffect('WaveShaperNode', 3, function( context, options ) {
+	this._curve = null;
+	this.oversample = options.oversample || 'none'; // not supported
+	if( options.curve ) { this.curve = options.curve; }
+}, {
+	get curve() { return this._curve; },
+	set curve( curve ) {
+		this._curve = curve ? new Float32Array(curve) : null;
+		this._dataDirty = true;
+		audioMarkDirty();
+	},
+	_syncData: function( mixer ) {
+		if( this._curve ) { mixer.setBusCurve(this._busId, this._curve); }
+		else { mixer.setBusCurve(this._busId); }
+	}
+});
+
+audioEffect('DynamicsCompressorNode', 4, function( context, options ) {
+	this.threshold = new AudioParam(context, options.threshold === undefined ? -24 : options.threshold, -100, 0);
+	this.knee = new AudioParam(context, options.knee === undefined ? 30 : options.knee, 0, 40);
+	this.ratio = new AudioParam(context, options.ratio === undefined ? 12 : options.ratio, 1, 20);
+	this.attack = new AudioParam(context, options.attack === undefined ? .003 : options.attack, 0, 1);
+	this.release = new AudioParam(context, options.release === undefined ? .25 : options.release, 0, 1);
+}, {
+	get reduction() { return audioMixer ? audioMixer.getBusReduction(this._busId) : 0; },
+	_params: function() {
+		return [this.threshold.value, this.knee.value, this.ratio.value, this.attack.value, this.release.value];
+	}
+});
+
+audioEffect('ConvolverNode', 5, function( context, options ) {
+	this._buffer = null;
+	this.normalize = !options.disableNormalization;
+	if( options.buffer ) { this.buffer = options.buffer; }
+}, {
+	get buffer() { return this._buffer; },
+	set buffer( buffer ) {
+		if( buffer && !(buffer instanceof AudioBuffer) ) {
+			throw new TypeError('ConvolverNode.buffer must be an AudioBuffer');
+		}
+		this._buffer = buffer || null;
+		this._dataDirty = true;
+		audioMarkDirty();
+	},
+	_stereoOutput: function() {
+		return !!this._buffer && this._buffer.numberOfChannels > 1;
+	},
+	_syncData: function( mixer ) {
+		var b = this._buffer;
+		if( !b ) { return mixer.setBusImpulse(this._busId); }
+		var channels = b._channels.slice(0, 2);
+		var scale = 1;
+		if( this.normalize ) {
+			// Web Audio's normalization, so a reverb sounds about as loud as
+			// the dry signal whatever the impulse's level
+			var power = 0;
+			for( var c = 0; c < b._channels.length; c++ ) {
+				var data = b._channels[c];
+				for( var i = 0; i < data.length; i++ ) { power += data[i] * data[i]; }
+			}
+			power = Math.sqrt(power / (b._channels.length * b.length));
+			if( !isFinite(power) || power < 0.000125 ) { power = 0.000125; }
+			scale = 1 / power * Math.pow(10, -58 * 0.05) * 44100 / b.sampleRate;
+		}
+		// The impulse must be at the mixer's rate; resample it if not
+		if( b.sampleRate !== mixer.sampleRate ) {
+			channels = channels.map(function( data ) {
+				return audioResample(data, b.sampleRate, mixer.sampleRate);
+			});
+		}
+		if( channels.length > 1 ) { mixer.setBusImpulse(this._busId, scale, channels[0], channels[1]); }
+		else { mixer.setBusImpulse(this._busId, scale, channels[0]); }
+	}
+});
+
+// Linear resampling, for impulse responses
+var audioResample = function( data, fromRate, toRate ) {
+	var length = Math.max(1, Math.round(data.length * toRate / fromRate));
+	var out = new Float32Array(length), step = fromRate / toRate;
+	for( var i = 0; i < length; i++ ) {
+		var p = i * step, i0 = p | 0, t = p - i0;
+		var a = data[i0] || 0, b = data[i0 + 1] || 0;
+		out[i] = a + (b - a) * t;
+	}
+	return out;
+};
 
 
 // Source nodes
@@ -1109,31 +1428,45 @@ var AudioScheduledSourceNode = audioSubclass('AudioScheduledSourceNode', AudioNo
 });
 audioEventTarget(AudioScheduledSourceNode.prototype);
 
+var audioLoopProperty = function( name ) {
+	return {
+		get: function() { return this['_' + name]; },
+		set: function( value ) { this['_' + name] = value; audioMarkDirty(); }
+	};
+};
+
 var AudioBufferSourceNode = audioSubclass('AudioBufferSourceNode', AudioScheduledSourceNode, function( context, options ) {
 	this.buffer = options.buffer || null;
 	this.loop = !!options.loop;
-	this.loopStart = options.loopStart || 0; // not supported: loops play the whole buffer
+	this.loopStart = options.loopStart || 0;
 	this.loopEnd = options.loopEnd || 0;
 	this.playbackRate = new AudioParam(context, options.playbackRate === undefined ? 1 : options.playbackRate);
 	this.detune = new AudioParam(context, options.detune || 0);
 	this._voice = 0;
 	this._pushed = null;
 }, {
+	_startSignal: function() {
+		return audioIdentity(!(this.buffer && this.buffer.numberOfChannels > 1));
+	},
 	_begin: function( offset ) {
 		var buffer = this.buffer;
 		var mixer = getAudioMixer();
 		if( !buffer || !buffer.length ) {
 			return this._end();
 		}
+		// Bring the graph up to date first, with this source in it
 		var voice = audioNextVoiceId++;
+		this._voice = voice;
+		audioSources[voice] = this;
+		audioFlush();
 		var p = this._params();
-		if( !mixer.play(voice, buffer._upload(mixer), offset, p[0], p[1], p[2], p[3], p[4], p[5]) ) {
+		if( !mixer.play(voice, buffer._upload(mixer), offset, p[0], p[1], p[2], p[3], p[4]) ) {
+			delete audioSources[voice];
+			this._voice = 0;
 			return this._end(); // every voice busy
 		}
 		this._state = 'playing';
-		this._voice = voice;
 		this._pushed = p;
-		audioSources[voice] = this;
 	},
 	_end: function() {
 		if( this._voice ) {
@@ -1148,45 +1481,27 @@ var AudioBufferSourceNode = audioSubclass('AudioBufferSourceNode', AudioSchedule
 		this._voice = 0;
 		AudioScheduledSourceNode.prototype._ended.call(this);
 	},
-	// [loop, rate, m0, m1, m2, m3] as the mixer takes them
+	// [loop, loopStart, loopEnd, rate, routes] as the mixer takes them
 	_params: function() {
-		var stereo = this.buffer && this.buffer.numberOfChannels > 1;
-		var total = [0, 0, 0, 0];
-		var visit = function( node, signal, depth ) {
-			if( depth > 32 ) { return; } // a cycle
-			if( node instanceof AudioDestinationNode ) {
-				var m = signal.m;
-				if( signal.mono ) { m = [m[0], 0, m[0], 0]; }
-				for( var i = 0; i < 4; i++ ) { total[i] += m[i]; }
-				return;
-			}
-			signal = node._process(signal);
-			for( var i = 0; i < node._outputs.length; i++ ) {
-				visit(node._outputs[i], signal, depth + 1);
-			}
-		};
-		var start = stereo ? {mono: false, m: [1, 0, 0, 1]} : {mono: true, m: [1, 0, 0, 0]};
-		for( var i = 0; i < this._outputs.length; i++ ) {
-			visit(this._outputs[i], start, 1);
-		}
 		var rate = this.playbackRate.value * Math.pow(2, this.detune.value / 1200);
-		return [this.loop, rate, total[0], total[1], total[2], total[3]];
+		return [this.loop, this.loopStart, this.loopEnd, rate, audioRoutes(this, this._startSignal())];
 	},
 	_push: function() {
-		if( !this._voice ) { return; }
+		if( !this._voice || !this._pushed ) { return; }
 		var p = this._params(), last = this._pushed;
-		for( var i = 0; i < 6; i++ ) {
-			if( p[i] !== last[i] ) {
-				audioMixer.update(this._voice, p[0], p[1], p[2], p[3], p[4], p[5]);
-				this._pushed = p;
-				return;
-			}
+		if( p[0] !== last[0] || p[1] !== last[1] || p[2] !== last[2] || p[3] !== last[3] ||
+			!audioSameNumbers(p[4], last[4])
+		) {
+			audioMixer.update(this._voice, p[0], p[1], p[2], p[3], p[4]);
+			this._pushed = p;
 		}
-	}
-});
-Object.defineProperty(AudioBufferSourceNode.prototype, 'loop', {
-	get: function() { return this._loop; },
-	set: function( loop ) { this._loop = !!loop; audioMarkDirty(); }
+	},
+	get loop() { return this._loop; },
+	set loop( loop ) { this._loop = !!loop; audioMarkDirty(); },
+	get loopStart() { return this._loopStart; },
+	set loopStart( value ) { this._loopStart = +value || 0; audioMarkDirty(); },
+	get loopEnd() { return this._loopEnd; },
+	set loopEnd( value ) { this._loopEnd = +value || 0; audioMarkDirty(); }
 });
 
 // Makes no sound; effect chains use it to keep nodes alive
@@ -1243,11 +1558,7 @@ AudioBuffer.prototype._upload = function( mixer ) {
 		if( audioBufferRegistry ) { audioBufferRegistry.register(this, this._id); }
 	}
 	if( this._dirty ) {
-		// The native side reads typed arrays from the start of their
-		// ArrayBuffer, so hand it arrays that begin there
-		var c = this._channels.map(function( channel ) {
-			return channel.byteOffset === 0 ? channel : new Float32Array(channel);
-		});
+		var c = this._channels;
 		if( c.length > 1 ) { mixer.setBuffer(this._id, this.sampleRate, c[0], c[1]); }
 		else { mixer.setBuffer(this._id, this.sampleRate, c[0]); }
 		this._dirty = false;
@@ -1291,9 +1602,6 @@ BaseAudioContext.prototype.createBuffer = function( numberOfChannels, length, sa
 
 BaseAudioContext.prototype.decodeAudioData = function( data, success, failure ) {
 	var mixer = this._mixer;
-	if( ArrayBuffer.isView(data) ) {
-		data = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-	}
 	var promise = new Promise(function( resolve, reject ) {
 		mixer.decode(data, function( sampleRate, channels ) {
 			if( sampleRate === null ) {

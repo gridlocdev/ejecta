@@ -7,12 +7,17 @@ let player, playerColor, sparks = [], presses = 0;
 // A ZzFX blip, panned left or right by where it plays
 const blip = new Sound([,,537,.02,.02,.22,1,1.59,-6.98,4.97]);
 
+// Play/Pause cycles through effects on everything: none, a cave, an echo
+let effects, effectIndex = 0;
+const effectNames = ['No effect', 'Reverb', 'Echo'];
+
 function gameInit()
 {
     setCameraScale(64);
     setCanvasClearColor(hsl(.62, .4, .12));
     player = vec2();
     playerColor = hsl(.5, .8, .6);
+    effects = [undefined, new AudioReverb(2, 3, .6), new AudioDelay(.25, .5, .5)];
 }
 
 function gameUpdate()
@@ -31,6 +36,13 @@ function gameUpdate()
         blip.play(player);
         for (let i = 40; i--;)
             sparks.push({pos: player, vel: randInCircle(.3), life: 1, color: playerColor});
+    }
+
+    // Play/Pause on the Siri Remote, X on a controller
+    if (gamepadWasPressed(2))
+    {
+        effectIndex = (effectIndex + 1) % effects.length;
+        setAudioMasterEffect(effects[effectIndex]);
     }
 
     for (const s of sparks)
@@ -59,7 +71,7 @@ function gameRenderPost()
     const pad = gamepadConnected(0) ? 'Controller connected' : 'Waiting for a remote or controller';
     drawTextScreen('LittleJS on Ejecta', vec2(mainCanvasSize.x/2, 80), 64);
     drawTextScreen(pad, vec2(mainCanvasSize.x/2, 150), 32, hsl(0, 0, .7));
-    drawTextScreen(`Presses: ${presses}   FPS: ${averageFPS.toFixed(0)}`,
+    drawTextScreen(`Presses: ${presses}   ${effectNames[effectIndex]}   FPS: ${averageFPS.toFixed(0)}`,
         vec2(mainCanvasSize.x/2, mainCanvasSize.y - 80), 32, hsl(0, 0, .7));
 }
 

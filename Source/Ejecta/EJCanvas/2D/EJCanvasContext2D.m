@@ -684,9 +684,22 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	[tempPath lineToX:x y:y+h];
 	[tempPath close];
 	
-	[self setProgram:sharedGLContext.programFlat];
-	[tempPath drawLinesToContext:self];
+	[self strokePath:tempPath];
 	[tempPath release];
+}
+
+// Strokes a path, cut into dashes if setLineDash() asked for them
+- (void)strokePath:(EJPath *)strokePath {
+	[self setProgram:sharedGLContext.programFlat];
+	if( state->lineDashCount > 0 ) {
+		EJPath *dashed = [strokePath newDashedPathWithPattern:state->lineDash
+			count:state->lineDashCount offset:state->lineDashOffset];
+		[dashed drawLinesToContext:self];
+		[dashed release];
+	}
+	else {
+		[strokePath drawLinesToContext:self];
+	}
 }
 
 - (void)clearRectX:(float)x y:(float)y w:(float)w h:(float)h {
@@ -752,8 +765,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)stroke {
-	[self setProgram:sharedGLContext.programFlat];
-	[path drawLinesToContext:self];
+	[self strokePath:path];
 }
 
 - (void)moveToX:(float)x y:(float)y {

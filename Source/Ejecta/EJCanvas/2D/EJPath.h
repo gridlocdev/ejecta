@@ -63,4 +63,8 @@ typedef enum {
 - (void)drawPolygonsToContext:(EJCanvasContext2D *)context fillRule:(EJPathFillRule)fillRule target:(EJPathPolygonTarget)target;
 - (void)drawLinesToContext:(EJCanvasContext2D *)context;
 
+// A copy of this path cut into dashes, measured in the coordinate space of the
+// path's transform. Returns a retained path.
+- (EJPath *)newDashedPathWithPattern:(const float *)pattern count:(int)count offset:(float)offset;
+
 @end

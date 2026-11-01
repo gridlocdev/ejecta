@@ -15,6 +15,7 @@ jobs:
         with:
           node-version: 22
       - uses: extractions/setup-just@v2
+      - run: node tools/ejecta-sim/wasm/sources.mjs --check
       - run: just test
       - run: just littlejs-example
       - run: just check 6

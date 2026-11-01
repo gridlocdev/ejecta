@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
+import {wasmIsCurrent} from './wasm/sources.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
@@ -291,97 +292,183 @@ const GlobalUtils = nativeClass('GlobalUtils', {
 });
 
 
-// The audio mixer: a port of Source/Ejecta/EJAudio/EJAudioMixerCore.c, so
-// Web Audio code runs through the same math. Output levels are reported.
-const AUDIO_RATE = 48000;
+// The audio mixer: Source/Ejecta/EJAudio's C code (mixer, effects, Ogg
+// Vorbis decoder) built as WebAssembly by tools/ejecta-sim/wasm/build.sh, so
+// Web Audio code runs through exactly what the device runs. Output levels
+// are reported.
+if (!wasmIsCurrent()) {
+	console.log('Warning: tools/ejecta-sim/wasm/mixer.wasm is older than the C audio code; ' +
+		'run tools/ejecta-sim/wasm/build.sh (needs LLVM clang with wasm32)');
+}
+const wasm = new WebAssembly.Instance(
+	new WebAssembly.Module(fs.readFileSync(path.join(root, 'tools/ejecta-sim/wasm/mixer.wasm'))),
+	{env: {sin: Math.sin, cos: Math.cos, pow: Math.pow, exp: Math.exp, log: Math.log, atan: Math.atan, tan: Math.tan}}
+).exports;
+const heap = {
+	f32: (ptr, n) => new Float32Array(wasm.memory.buffer, ptr, n),
+	view: () => new DataView(wasm.memory.buffer),
+	floats(array) {
+		const ptr = wasm.malloc(Math.max(array.length, 1) * 4);
+		heap.f32(ptr, array.length).set(array);
+		return ptr;
+	},
+	doubles(array) {
+		const ptr = wasm.malloc(Math.max(array.length, 1) * 8);
+		new Float64Array(wasm.memory.buffer, ptr, array.length).set(array);
+		return ptr;
+	},
+	ints(array) {
+		const ptr = wasm.malloc(Math.max(array.length, 1) * 4);
+		new Int32Array(wasm.memory.buffer, ptr, array.length).set(array);
+		return ptr;
+	},
+	// [target, m0, m1, m2, m3, ...] as EJAudioRoute structs
+	routes(flat) {
+		const list = Array.from(flat || []).map(Number);
+		const count = Math.min(Math.floor(list.length / 5), 16);
+		const ptr = wasm.malloc(Math.max(count, 1) * 20), view = heap.view();
+		for (let i = 0; i < count; i++) {
+			view.setInt32(ptr + i * 20, Number.isFinite(list[i * 5]) ? list[i * 5] : -1, true);
+			for (let k = 0; k < 4; k++) view.setFloat32(ptr + i * 20 + 4 + k * 4, list[i * 5 + 1 + k], true);
+		}
+		return [ptr, count];
+	},
+};
+const isFloat32Array = (a) => Object.prototype.toString.call(a) === '[object Float32Array]';
 const audioStats = {voices: 0, peak: 0, ended: 0, decoded: 0, decodeErrors: 0};
 let simMixer = null;
 const AudioMixer = nativeClass('AudioMixer', {
-	sampleRate: AUDIO_RATE,
-	get currentTime() { return this._time; },
+	get sampleRate() { return wasm.mixer_rate(this._m); },
+	get currentTime() { return wasm.mixer_time(this._m); },
 	setBuffer(id, sampleRate, ...channels) {
-		if (!channels.length || channels.some((c) => Object.prototype.toString.call(c) !== '[object Float32Array]')) return false;
+		channels = channels.slice(0, 2);
+		if (!channels.length || !channels.every(isFloat32Array)) return false;
 		const length = Math.min(...channels.map((c) => c.length));
-		if (!length || !(sampleRate > 0) || !Number.isFinite(sampleRate)) return false;
-		this._buffers.set(id, {sampleRate, length, channels: channels.slice(0, 2).map((c) => Float32Array.from(c.subarray(0, length)))});
-		return true;
+		const ptrs = channels.map((c) => heap.floats(c.subarray(0, length)));
+		const ok = wasm.set_buffer(this._m, id | 0, ptrs[0], ptrs[1] || 0, channels.length, length, +sampleRate);
+		ptrs.forEach(wasm.free);
+		return !!ok;
 	},
-	deleteBuffer(id) { this._buffers.delete(id); },
-	play(voice, bufferId, offset, loop, rate, m0, m1, m2, m3) {
-		const buffer = this._buffers.get(bufferId);
-		if (!buffer || this._voices.size >= 64) return false;
-		const finite = (v) => Number.isFinite(v) ? v : 0;
-		let position = finite(offset) > 0 ? offset * buffer.sampleRate : 0;
-		if (loop) position %= buffer.length;
-		this._voices.set(voice, {buffer, position, loop: !!loop, rate: Math.max(finite(rate), 0), m: [m0, m1, m2, m3].map(finite),
-			ended: position >= buffer.length});
-		audioStats.voices++;
-		return true;
+	deleteBuffer(id) { wasm.delete_buffer(this._m, id | 0); },
+	play(voice, bufferId, offset, loop, loopStart, loopEnd, rate, routes) {
+		const [ptr, count] = heap.routes(routes);
+		const ok = wasm.play(this._m, voice | 0, bufferId | 0, +offset, loop ? 1 : 0, +loopStart, +loopEnd, +rate, ptr, count);
+		wasm.free(ptr);
+		if (ok) audioStats.voices++;
+		return !!ok;
 	},
-	update(voice, loop, rate, m0, m1, m2, m3) {
-		const v = this._voices.get(voice);
-		const finite = (x) => Number.isFinite(x) ? x : 0;
-		if (v && !v.ended) Object.assign(v, {loop: !!loop, rate: Math.max(finite(rate), 0), m: [m0, m1, m2, m3].map(finite)});
+	update(voice, loop, loopStart, loopEnd, rate, routes) {
+		const [ptr, count] = heap.routes(routes);
+		wasm.update(this._m, voice | 0, loop ? 1 : 0, +loopStart, +loopEnd, +rate, ptr, count);
+		wasm.free(ptr);
 	},
-	stop(voice) { const v = this._voices.get(voice); if (v) v.ended = true; },
+	stop(voice) { wasm.stop(this._m, voice | 0); },
+	setBus(id, type, maxDelay, mono) { return !!wasm.set_bus(this._m, id | 0, type | 0, +maxDelay, mono ? 1 : 0); },
+	deleteBus(id) { wasm.delete_bus(this._m, id | 0); },
+	setBusParams(id, params) {
+		const list = Array.from(params || []).map(Number).slice(0, 8);
+		const ptr = heap.doubles(list);
+		wasm.set_bus_params(this._m, id | 0, ptr, list.length);
+		wasm.free(ptr);
+	},
+	setBusCurve(id, curve) {
+		if (!isFloat32Array(curve)) return wasm.set_bus_curve(this._m, id | 0, 0, 0);
+		const ptr = heap.floats(curve);
+		wasm.set_bus_curve(this._m, id | 0, ptr, curve.length);
+		wasm.free(ptr);
+	},
+	setBusImpulse(id, scale, ...channels) {
+		channels = channels.slice(0, 2);
+		if (!channels.length || !channels.every(isFloat32Array)) {
+			return wasm.set_bus_impulse(this._m, id | 0, 0, 0, 0, 0, 1);
+		}
+		const length = Math.min(...channels.map((c) => c.length));
+		const ptrs = channels.map((c) => heap.floats(c.subarray(0, length)));
+		wasm.set_bus_impulse(this._m, id | 0, ptrs[0], ptrs[1] || 0, channels.length, length, +scale);
+		ptrs.forEach(wasm.free);
+	},
+	setBusRoutes(id, routes) {
+		const [ptr, count] = heap.routes(routes);
+		wasm.set_bus_routes(this._m, id | 0, ptr, count);
+		wasm.free(ptr);
+	},
+	setBusOrder(ids) {
+		const list = Array.from(ids || []).map((x) => x | 0).slice(0, 64);
+		const ptr = heap.ints(list);
+		wasm.set_bus_order(this._m, ptr, list.length);
+		wasm.free(ptr);
+	},
+	getBusReduction(id) { return wasm.get_bus_reduction(this._m, id | 0); },
 	suspend() { this._suspended = true; },
 	resume() { this._suspended = false; },
 	decode(data, callback) {
 		addTimer(() => {
-			const decoded = decodeWav(data);
+			const decoded = decodeWav(data) || decodeOgg(data);
 			if (decoded) audioStats.decoded++; else audioStats.decodeErrors++;
 			decoded
 				? callback(decoded.sampleRate, decoded.channels.map((c) => run('Float32Array').from(c)))
-				: callback(null, 'the simulator only decodes WAV files');
+				: callback(null, 'not a WAV or Ogg Vorbis file (the simulator decodes only those)');
 		}, 5);
 	},
 	// Render up to the virtual clock, then report ended voices
 	_render(toSeconds) {
 		if (this._suspended) return;
-		const frames = Math.round((toSeconds - this._time) * AUDIO_RATE);
-		if (frames <= 0) return;
-		const L = new Float32Array(frames), R = new Float32Array(frames);
-		for (const v of this._voices.values()) {
-			if (v.ended) continue;
-			const {channels, length, sampleRate} = v.buffer, [inL, inR] = channels;
-			const step = v.rate * sampleRate / AUDIO_RATE, [m0, m1, m2, m3] = v.m;
-			let p = v.position;
-			for (let f = 0; f < frames; f++) {
-				if (p >= length) {
-					if (!v.loop) { v.ended = true; break; }
-					p %= length;
-				}
-				const i0 = p | 0, i1 = i0 + 1 < length ? i0 + 1 : v.loop ? 0 : i0, t = p - i0;
-				const l = inL[i0] + (inL[i1] - inL[i0]) * t;
-				const r = inR ? inR[i0] + (inR[i1] - inR[i0]) * t : 0;
-				L[f] += m0 * l + m1 * r;
-				R[f] += m2 * l + m3 * r;
-				p += step;
-			}
-			if (!v.ended && !v.loop && p >= length) v.ended = true;
-			v.position = p;
+		let frames = Math.round((toSeconds - this.currentTime) * this.sampleRate);
+		while (frames > 0) {
+			const n = Math.min(frames, 4096);
+			wasm.render(this._m, this._left, this._right, n);
+			const L = heap.f32(this._left, n), R = heap.f32(this._right, n);
+			for (let f = 0; f < n; f++) audioStats.peak = Math.max(audioStats.peak, Math.abs(L[f]), Math.abs(R[f]));
+			this._last = {left: L[n - 1], right: R[n - 1], frames: n};
+			frames -= n;
 		}
-		for (let f = 0; f < frames; f++)
-			audioStats.peak = Math.max(audioStats.peak, Math.abs(L[f]), Math.abs(R[f]));
-		this._last = {left: L[frames - 1], right: R[frames - 1], frames};
-		this._time += frames / AUDIO_RATE;
-		for (const [id, v] of this._voices) {
-			if (!v.ended) continue;
-			this._voices.delete(id);
-			audioStats.ended++;
-			guard('onvoiceended', () => this.onvoiceended?.(id));
+		for (;;) {
+			const count = wasm.take_ended(this._m, this._ids, 64);
+			const ids = new Int32Array(wasm.memory.buffer, this._ids, count).slice();
+			for (const id of ids) {
+				audioStats.ended++;
+				guard('onvoiceended', () => this.onvoiceended?.(id));
+			}
+			if (count < 64) break;
 		}
 	},
 }, function () {
-	Object.assign(this, {_time: 0, _buffers: new Map(), _voices: new Map(), _suspended: false});
+	this._m = wasm.mixer_create(48000, 64);
+	this._left = wasm.malloc(4096 * 4);
+	this._right = wasm.malloc(4096 * 4);
+	this._ids = wasm.malloc(64 * 4);
+	this._suspended = false;
 	simMixer = this;
 });
 
+function bytesOf(data) {
+	const tag = Object.prototype.toString.call(data);
+	return tag === '[object ArrayBuffer]' ? Buffer.from(new Uint8Array(data))
+		: ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : Buffer.alloc(0);
+}
+
+function decodeOgg(data) {
+	const bytes = bytesOf(data);
+	if (bytes.length < 4) return null;
+	const ptr = wasm.malloc(bytes.length), out = wasm.malloc(16);
+	new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
+	let result = null;
+	if (wasm.decode_ogg(ptr, bytes.length, out)) {
+		const view = heap.view();
+		const channels = view.getUint32(out, true), count = view.getInt32(out + 4, true);
+		const frames = view.getInt32(out + 8, true), sampleRate = view.getInt32(out + 12, true);
+		result = {sampleRate, channels: Array.from({length: count}, (_, c) =>
+			heap.f32(heap.view().getUint32(channels + c * 4, true), frames).slice())};
+		wasm.decoded_free(out);
+	}
+	wasm.free(ptr);
+	wasm.free(out);
+	return result;
+}
+
 // PCM 8/16/24/32-bit and float WAV
 function decodeWav(data) {
-	const tag = Object.prototype.toString.call(data);
-	const bytes = tag === '[object ArrayBuffer]' ? Buffer.from(new Uint8Array(data))
-		: ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : Buffer.alloc(0);
+	const bytes = bytesOf(data);
 	if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') return null;
 	let format, channels, sampleRate, bits, offset = 12;
 	while (offset + 8 <= bytes.length) {
@@ -444,11 +531,14 @@ const frameCalls = [];
 for (let frameEnd = 16; now < seconds * 1000; frameEnd += 1000 / 60) {
 	const canvasCalls = () => Object.entries(calls).reduce((n, [k, v]) => k.startsWith('CanvasContext2D.') ? n + v : n, 0);
 	const before = canvasCalls();
-	// Press button 0 and push the stick right for a moment, once a second.
+	// Press button 0 and push the stick right for a moment, once a second, and
+// button 2 (Play/Pause) every other second.
 	if (simGamepads) {
 		const t = now % 1000, pad = simGamepads[0];
 		pad.buttons[0].pressed = t > 500 && t < 600;
 		pad.buttons[0].value = +pad.buttons[0].pressed;
+		pad.buttons[2].pressed = t > 200 && t < 300 && Math.floor(now / 1000) % 2 === 1; // every other second
+		pad.buttons[2].value = +pad.buttons[2].pressed;
 		pad.axes[0] = t > 500 ? 1 : 0;
 		pad.timestamp = now;
 	}

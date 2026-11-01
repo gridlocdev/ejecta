@@ -518,21 +518,50 @@ EJ_BIND_FUNCTION(ellipse, ctx, argc, argv) {
 	return NULL;
 }
 
-// Dashed lines are not implemented; lines are always drawn solid. These are
-// bound so scripts that set a dash pattern (or reset it to []) keep running.
 EJ_BIND_FUNCTION(setLineDash, ctx, argc, argv) {
+	if( argc < 1 || !JSValueIsObject(ctx, argv[0]) ) { return NULL; }
+	JSObjectRef array = JSValueToObject(ctx, argv[0], NULL);
+	JSStringRef lengthName = JSStringCreateWithUTF8CString("length");
+	int count = (int)JSValueToNumberFast(ctx, JSObjectGetProperty(ctx, array, lengthName, NULL));
+	JSStringRelease(lengthName);
+	if( count < 0 || count > EJ_CANVAS_LINE_DASH_MAX ) { return NULL; }
+	
+	// As the spec says: ignore the call for negative or non-finite values,
+	// and repeat an odd list to make it even
+	float dash[EJ_CANVAS_LINE_DASH_MAX];
+	for( int i = 0; i < count; i++ ) {
+		dash[i] = JSValueToNumberFast(ctx, JSObjectGetPropertyAtIndex(ctx, array, i, NULL));
+		if( !isfinite(dash[i]) || dash[i] < 0 ) { return NULL; }
+	}
+	int total = (count % 2) ? count * 2 : count;
+	if( total > EJ_CANVAS_LINE_DASH_MAX ) { return NULL; }
+	EJCanvasState *state = renderingContext.state;
+	for( int i = 0; i < total; i++ ) {
+		state->lineDash[i] = dash[i % count];
+	}
+	state->lineDashCount = total;
 	return NULL;
 }
 
 EJ_BIND_FUNCTION(getLineDash, ctx, argc, argv) {
-	return JSObjectMakeArray(ctx, 0, NULL, NULL);
+	EJCanvasState *state = renderingContext.state;
+	JSValueRef values[EJ_CANVAS_LINE_DASH_MAX];
+	for( int i = 0; i < state->lineDashCount; i++ ) {
+		values[i] = JSValueMakeNumber(ctx, state->lineDash[i]);
+	}
+	return JSObjectMakeArray(ctx, state->lineDashCount, values, NULL);
 }
 
 EJ_BIND_GET(lineDashOffset, ctx) {
-	return JSValueMakeNumber(ctx, 0);
+	return JSValueMakeNumber(ctx, renderingContext.state->lineDashOffset);
 }
 
-EJ_BIND_SET(lineDashOffset, ctx, value) {}
+EJ_BIND_SET(lineDashOffset, ctx, value) {
+	float offset = JSValueToNumberFast(ctx, value);
+	if( isfinite(offset) ) {
+		renderingContext.state->lineDashOffset = offset;
+	}
+}
 
 EJ_BIND_FUNCTION_NOT_IMPLEMENTED( isPointInPath );
 
