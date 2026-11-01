@@ -216,6 +216,7 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 - (void)quadraticCurveToCpx:(float)cpx cpy:(float)cpy x:(float)x y:(float)y;
 - (void)arcToX1:(float)x1 y1:(float)y1 x2:(float)x2 y2:(float)y2 radius:(float)radius;
 - (void)arcX:(float)x y:(float)y radius:(float)radius startAngle:(float)startAngle endAngle:(float)endAngle antiClockwise:(BOOL)antiClockwise;
+- (void)ellipseX:(float)x y:(float)y radiusX:(float)radiusX radiusY:(float)radiusY rotation:(float)rotation startAngle:(float)startAngle endAngle:(float)endAngle antiClockwise:(BOOL)antiClockwise;
 
 - (void)fillText:(NSString *)text x:(float)x y:(float)y;
 - (void)strokeText:(NSString *)text x:(float)x y:(float)y;

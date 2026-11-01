@@ -505,6 +505,35 @@ EJ_BIND_FUNCTION(resetClip, ctx, argc, argv) {
 	return NULL;
 }
 
+EJ_BIND_FUNCTION(ellipse, ctx, argc, argv) {
+	if( argc < 7 ) { return NULL; }
+	float v[7];
+	for( int i = 0; i < 7; i++ ) {
+		v[i] = JSValueToNumberFast(ctx, argv[i]);
+	}
+	BOOL antiClockwise = (argc > 7 ? JSValueToBoolean(ctx, argv[7]) : NO);
+	
+	[renderingContext ellipseX:v[0] y:v[1] radiusX:v[2] radiusY:v[3] rotation:v[4]
+		startAngle:v[5] endAngle:v[6] antiClockwise:antiClockwise];
+	return NULL;
+}
+
+// Dashed lines are not implemented; lines are always drawn solid. These are
+// bound so scripts that set a dash pattern (or reset it to []) keep running.
+EJ_BIND_FUNCTION(setLineDash, ctx, argc, argv) {
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getLineDash, ctx, argc, argv) {
+	return JSObjectMakeArray(ctx, 0, NULL, NULL);
+}
+
+EJ_BIND_GET(lineDashOffset, ctx) {
+	return JSValueMakeNumber(ctx, 0);
+}
+
+EJ_BIND_SET(lineDashOffset, ctx, value) {}
+
 EJ_BIND_FUNCTION_NOT_IMPLEMENTED( isPointInPath );
 
 @end

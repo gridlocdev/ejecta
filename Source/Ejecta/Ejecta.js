@@ -224,11 +224,13 @@ HTMLElement.prototype.appendChild = function( element ) {
 			window.eval( element.text );
 		}
 	}
+	element.parentElement = element.parentNode = this;
+	return element;
 };
 
 HTMLElement.prototype.insertBefore = function( newElement, existingElement ) {
 	// Just append; we don't care about order here
-	this.appendChild( newElement );
+	return this.appendChild( newElement );
 };
 
 HTMLElement.prototype.removeChild = function( node ) {
@@ -237,6 +239,7 @@ HTMLElement.prototype.removeChild = function( node ) {
 			this.children.splice(i, 1);
 		}
 	}
+	return node;
 };
 
 HTMLElement.prototype.getBoundingClientRect = function() {
@@ -274,6 +277,7 @@ window.document = {
 	
 	head: new HTMLElement( 'head' ),
 	body: new HTMLElement( 'body' ),
+	activeElement: null,
 	
 	events: {},
 	
@@ -328,6 +332,8 @@ window.document = {
 		return elements;
 	},
 
+	hasFocus: function() { return !this.hidden; },
+
 	createEvent: function (type) { 
 		return new window.Event(type); 
 	},
@@ -370,6 +376,8 @@ window.document = {
 		}
 	}
 };
+
+document.activeElement = document.body;
 
 window.canvas.addEventListener = window.addEventListener = function( type, callback ) {
 	window.document.addEventListener(type,callback);

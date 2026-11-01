@@ -159,6 +159,12 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 			? EJCanvasContext2DScreen.class
 			: EJCanvasContext2DTexture.class;
 	}
+	else if( [type rangeOfString:@"webgl2"].location != NSNotFound ) {
+		// Only WebGL 1 is implemented. Return null like a browser without
+		// WebGL 2 would, so engines (e.g. LittleJS) fall back on their own
+		// instead of getting a WebGL 1 context they can't use.
+		return NULL;
+	}
 	else if( [type rangeOfString:@"webgl"].location != NSNotFound ) {
 		newContextMode = kEJCanvasContextModeWebGL;
 		bindingClass = EJBindingCanvasContextWebGL.class;

@@ -44,7 +44,8 @@
 	// the button indices are not mingled.
 	// See: http://www.w3.org/TR/gamepad/#remapping
 	
-	// Buttons unsupported by iOS: Select:8, Start:9, LeftStick:10, RightStick:11
+	// Select:8, Start:9, LeftStick:10 and RightStick:11 are only available on
+	// extended gamepads.
 	
 	NSObject<EJControllerButtonInputProtocol> *mapping[kEJGamepadNumButtons] = {NULL};
 	if( controller.extendedGamepad ) {
@@ -61,6 +62,14 @@
 		mapping[kEJGamepadButtonDown] = gamepad.dpad.down;
 		mapping[kEJGamepadButtonLeft] = gamepad.dpad.left;
 		mapping[kEJGamepadButtonRight] = gamepad.dpad.right;
+
+		// Buttons added to GCExtendedGamepad in iOS/tvOS 12.1 and 13. Modern Xbox,
+		// PlayStation and MFi controllers report these. buttonOptions and the
+		// thumbstick buttons are nil on controllers that don't have them.
+		mapping[kEJGamepadButtonSelect] = gamepad.buttonOptions;
+		mapping[kEJGamepadButtonStart] = gamepad.buttonMenu;
+		mapping[kEJGamepadButtonLeftStick] = gamepad.leftThumbstickButton;
+		mapping[kEJGamepadButtonRightStick] = gamepad.rightThumbstickButton;
 	}
 	else if( controller.gamepad ) {
 		GCGamepad *gamepad = controller.gamepad;

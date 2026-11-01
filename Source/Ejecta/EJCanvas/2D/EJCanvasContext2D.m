@@ -793,6 +793,23 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	[path arcX:x y:y radius:radius startAngle:startAngle endAngle:endAngle antiClockwise:antiClockwise];
 }
 
+- (void)ellipseX:(float)x y:(float)y radiusX:(float)radiusX radiusY:(float)radiusY
+	rotation:(float)rotation startAngle:(float)startAngle endAngle:(float)endAngle
+	antiClockwise:(BOOL)antiClockwise
+{
+	if( radiusX < 0 || radiusY < 0 ) { return; }
+	
+	// An ellipse is a unit circle arc drawn through a transform that moves,
+	// turns and stretches it. The path takes its points through path.transform,
+	// so swap that in for this arc only; state->transform stays as it was.
+	CGAffineTransform t = CGAffineTransformTranslate(state->transform, x, y);
+	t = CGAffineTransformRotate(t, rotation);
+	t = CGAffineTransformScale(t, radiusX, radiusY);
+	path.transform = t;
+	[path arcX:0 y:0 radius:1 startAngle:startAngle endAngle:endAngle antiClockwise:antiClockwise];
+	path.transform = state->transform;
+}
+
 - (void)fillText:(NSString *)text x:(float)x y:(float)y {
 	float scale = CGAffineTransformGetScale( state->transform );
 	EJFont *font = [fontCache fontWithDescriptor:state->font contentScale:scale];
