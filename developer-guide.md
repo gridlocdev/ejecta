@@ -57,11 +57,15 @@ just test     # all of the below that doesn't need a game in App/
 just check    # run the game in App/ against Ejecta's API
 ```
 
-- `just test-mixer` compiles the native audio mixer (`Source/Ejecta/EJAudio/EJAudioMixerCore.c`) with AddressSanitizer and runs `tools/audio-mixer-test/test.c`: mixing, resampling, panning matrices, loops, stops, and a two-thread stress test.
-- `just test-js` runs `tools/ejecta-sim/tests/webaudio` in the API simulator. It checks the Web Audio API and `fetch()` in `Ejecta.js`: gain, panning, ramps, `ended` events, `decodeAudioData`, suspend and resume, and loading files. Lines starting with `FAIL` make it exit with an error.
+- `just test-mixer` compiles the native audio code in `Source/Ejecta/EJAudio/` with AddressSanitizer and runs three test programs in `tools/audio-mixer-test/`:
+  - `test.c` (the mixer): mixing, resampling, panning matrices, loop points, effect buses and routing, delay feedback, and a two-thread stress test.
+  - `effects_test.c`: each effect's response, and the convolver against direct convolution.
+  - `ogg_test.c`: decoding the Ogg files in `data/`.
+- `just test-canvas` tests how lines are cut into dashes (`EJPathDash.h`).
+- `just test-js` runs `tools/ejecta-sim/tests/webaudio` in the API simulator. It checks the Web Audio API and `fetch()` in `Ejecta.js`: gain, panning, ramps, loop points, `ended` events, every effect node, an echo with feedback, `decodeAudioData` (WAV and Ogg), suspend and resume, and loading files. Lines starting with `FAIL` make it exit with an error.
 - `just check [seconds] [--lenient]` runs `App/` in the API simulator (`tools/ejecta-sim/sim.mjs`). It lists every property the game reads that Ejecta doesn't bind, plus errors, sound levels and how many canvas calls a frame makes. A fake Siri Remote clicks and swipes once a second. `--lenient` keeps going past missing functions, so you see all of them in one run.
 
-The simulator reads the `EJ_BIND_*` macros in `Source/`, so it always matches the native code. It mixes audio with a JavaScript copy of the C mixer. It doesn't draw anything, so it can't catch rendering bugs. A few reported reads are harmless feature checks, like `navigator.audioSession`.
+The simulator reads the `EJ_BIND_*` macros in `Source/`, so it always matches the native code. Audio runs through the real C code (mixer, effects and Ogg decoder), built as WebAssembly in `tools/ejecta-sim/wasm/mixer.wasm`. That file is checked in, so you only rebuild it after changing the C audio code: `just build-wasm`, which needs LLVM's clang and `wasm-ld` (on macOS, `brew install llvm lld` and run it with `CC=$(brew --prefix llvm)/bin/clang`). The simulator warns, and CI fails, if `mixer.wasm` is older than the C code. The simulator doesn't draw anything, so it can't catch rendering bugs. A few reported reads are harmless feature checks, like `navigator.audioSession`.
 
 These are the same checks CI runs on every push.
 
@@ -113,11 +117,15 @@ GitHub turns Actions off for new forks. If nothing runs, enable them under the r
 | Path | What it is |
 |---|---|
 | `Source/Ejecta/` | Ejecta's native code; `Ejecta.js` is the JavaScript that runs before the game |
-| `Source/Ejecta/EJAudio/EJAudioMixerCore.c` | The sample mixer behind Web Audio, plain C |
+| `Source/Ejecta/EJAudio/EJAudioMixerCore.c` | The sample mixer behind Web Audio: voices, effect buses, routing. Plain C |
+| `Source/Ejecta/EJAudio/EJAudioEffects.c` | Filter, delay, wave shaper, compressor and convolver DSP. Plain C |
+| `Source/Ejecta/EJAudio/EJAudioDecodeOgg.c` | Ogg Vorbis decoding with `Source/lib/stb/stb_vorbis.c` |
+| `Source/Ejecta/EJCanvas/2D/EJPathDash.h` | Cuts paths into dashes for `setLineDash()` |
 | `Source/Ejecta/EJAudio/EJBindingAudioMixer.m` | `Ejecta.AudioMixer`: runs the mixer on AVAudioEngine, decodes audio files |
 | `extras/littlejs/` | The LittleJS adapter (`littlejs-ejecta.js`) and example game |
 | `tools/ejecta-sim/` | The API simulator and its tests |
-| `tools/audio-mixer-test/` | C tests for the mixer |
+| `tools/audio-mixer-test/`, `tools/canvas-test/` | C and C++ tests |
+| `tools/ejecta-sim/wasm/` | Builds the audio C code as WebAssembly for the simulator |
 | `App/` | The game that gets built in (git-ignored) |
 
 ## Working on Ejecta
@@ -143,9 +151,15 @@ The simulator picks up new bindings automatically. If JavaScript depends on what
 
 ### How Web Audio works here
 
-`Ejecta.js` implements the Web Audio objects in JavaScript. When a source plays, the gains and stereo panners on every path from it to the destination are folded into one 2×2 matrix and a playback rate. These go to the native mixer, which resamples with linear interpolation and mixes all voices into one AVAudioSourceNode. Changes to gains, pans and ramps are pushed once per frame. Filter, delay, compressor, convolver and wave shaper nodes can be built into a chain, but they pass sound through unchanged.
+`Ejecta.js` implements the Web Audio objects in JavaScript and compiles the node graph for the native mixer whenever it changes, at most once a frame:
 
-Up to 64 sounds play at once. A `start()` beyond that fires `ended` straight away. Decoding goes through AVAudioFile, so WAV, MP3, AAC/M4A, AIFF, CAF and FLAC work. Ogg Vorbis and Opus probably don't, so convert `.ogg` files to `.m4a` or `.mp3`; `decodeAudioData` rejects what it can't read. Audio stops while the app is in the background and picks up when it returns.
+- **Gains and stereo panners are folded into routes.** Each route goes from a source or an effect to the output or to another effect, through a 2×2 matrix (left and right in, left and right out).
+- **Each effect node is a bus in the mixer**: `BiquadFilterNode`, `DelayNode`, `WaveShaperNode`, `DynamicsCompressorNode` or `ConvolverNode`. Buses run in order in 128-frame blocks. A route back to a bus that already ran this block (a feedback loop through a delay) arrives one block later, as in browsers.
+- **Mono stays mono** until a panner or a stereo source makes it stereo, so panning matches browsers.
+- **The mixer** (`EJAudioMixerCore.c`) resamples sources with linear interpolation and sums everything into one AVAudioSourceNode. It never blocks the audio thread: if the JavaScript side is changing something at that moment, it outputs one block of silence.
+- **Reverb** is uniformly partitioned FFT convolution in 512-frame blocks, so its output is 512 frames late. A reverb that has gone quiet stops using CPU.
+
+Up to 64 sounds play at once. A `start()` beyond that fires `ended` straight away. Decoding goes through AVAudioFile (WAV, MP3, AAC/M4A, AIFF, CAF, FLAC) and stb_vorbis (Ogg Vorbis). Audio stops while the app is in the background and picks up when it returns.
 
 ## Troubleshooting
 

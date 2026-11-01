@@ -19,9 +19,10 @@ just tv                 # build, install over Wi‑Fi and start it on the Apple 
 ## What changed from upstream
 
 - **Project**: tvOS and iOS 15 minimum, no Bitcode, automatic signing, the upstream author's team ID removed, iAd removed (gone from the SDK), and a shared `Ejecta-TV` scheme so `xcodebuild` and CI can build it.
-- **Web Audio**: `AudioContext`, `AudioBuffer`, `AudioBufferSourceNode`, `GainNode`, `StereoPannerNode`, `AudioParam` ramps and `decodeAudioData()`, mixed natively on AVAudioEngine. See [How Web Audio works here](developer-guide.md#how-web-audio-works-here) for what's covered.
+- **Web Audio**: `AudioContext`, `AudioBuffer`, `AudioBufferSourceNode` with loop points, `GainNode`, `StereoPannerNode`, and effects: `BiquadFilterNode`, `DelayNode` (feedback loops work), `WaveShaperNode`, `DynamicsCompressorNode` and `ConvolverNode` (reverb). Also `AudioParam` ramps and `decodeAudioData()` for WAV, MP3, AAC, FLAC and Ogg Vorbis. All mixed natively on AVAudioEngine. See [How Web Audio works here](developer-guide.md#how-web-audio-works-here) for details.
 - **fetch()**: loads files from the App folder or the network, with `json()`, `text()` and `arrayBuffer()`. A missing local file answers 404.
-- **Canvas**: `ctx.ellipse()` is implemented. `setLineDash()`, `getLineDash()` and `lineDashOffset` exist so scripts that use them keep running, but lines are still drawn solid.
+- **Canvas**: `ctx.ellipse()` and dashed lines (`setLineDash()`, `getLineDash()`, `lineDashOffset`) are implemented.
+- **Typed arrays**: native code now reads a typed array view from its own start. Before, a `subarray()` passed to WebGL's `bufferData`, `readPixels` or similar was read from the start of its whole buffer.
 - **Canvas style**: `canvas.style.width = "100%"` (and height, left, top) is now relative to the screen instead of being read as 100 px.
 - **WebGL**: `getContext("webgl2")` returns `null` instead of a WebGL 1 context, so engines can tell it isn't there and fall back.
 - **DOM emulation**: `appendChild`, `insertBefore` and `removeChild` return the node as in a browser, and children get `parentElement`. `document.hasFocus()` and `document.activeElement` exist.
@@ -39,7 +40,7 @@ just tv
 
 This copies your folder into `App/` and writes an `App/index.js` that loads LittleJS, then `extras/littlejs/littlejs-ejecta.js`, then your game. Your game needs to be a plain script that uses LittleJS's globals, like the LittleJS starter. ES module `import`s aren't supported.
 
-`extras/littlejs/littlejs-ejecta.js` turns LittleJS's WebGL off, so it draws with Canvas2D. It also gives LittleJS Ejecta's screen canvas and fits a `setCanvasFixedSize` canvas to the screen. ZzFX sounds and sound files work through Ejecta's Web Audio.
+`extras/littlejs/littlejs-ejecta.js` turns LittleJS's WebGL off, so it draws with Canvas2D. It also gives LittleJS Ejecta's screen canvas and fits a `setCanvasFixedSize` canvas to the screen. ZzFX sounds, sound files and LittleJS's audio effects (`AudioReverb`, `AudioDelay`, `AudioFilter`, `AudioDistortion`, `AudioCompressor`) work through Ejecta's Web Audio. In the example game, Play/Pause cycles through a reverb and an echo.
 
 ## Controls
 
@@ -57,7 +58,6 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 ## Known gaps
 
 - **No WebGL 2.** LittleJS uses Canvas2D, which is fine for most 2D games. Thousands of sprites a frame will be slower than in a browser.
-- **Ogg audio files** probably won't decode; use `.m4a` or `.mp3`.
-- **Audio effects pass through.** Filter, delay, compressor, convolver and wave shaper nodes can be created and connected, but don't change the sound. Loops always play the whole buffer (`loopStart` and `loopEnd` are ignored).
-- **Dashed lines** draw solid.
-- **Not yet run on a device.** CI builds the `Ejecta-TV` target with Xcode 16.4, and the C mixer and the JavaScript run under tests. Nothing has run in the Simulator or on an Apple TV yet.
+- **Audio graph limits**: up to 64 sounds at once, 64 effect nodes, and 16 connections out of each. Connecting a node to an `AudioParam` (modulation) does nothing, `AnalyserNode` reports silence, and a `WaveShaperNode`'s `oversample` is ignored. Reverb (`ConvolverNode`) output is 512 frames (about 11 ms) late.
+- **Ogg Opus** files aren't decoded unless tvOS's own decoder handles them; Ogg Vorbis is.
+- **Not yet run on a device.** CI builds the `Ejecta-TV` target with Xcode 16.4, and the C audio code and the JavaScript run under tests. Nothing has run in the Simulator or on an Apple TV yet.
