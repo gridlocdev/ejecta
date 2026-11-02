@@ -188,7 +188,7 @@ Canvas2D draws with Metal; WebGL still uses OpenGL ES, which Apple has deprecate
 - **The screen canvas** copies its texture into a `CAMetalLayer` drawable to present. The pixels stay between frames, as the 2D canvas spec wants.
 - **Clipping and paths** work as they did with OpenGL. `clip()` writes depth values where the path is, and drawing then passes only where the depth matches. Concave paths are filled in two steps: their triangles mark the stencil buffer (non-zero counts front faces up and back faces down, even-odd inverts), then a rectangle fills where the stencil is set. Transparent strokes use the stencil so that overlapping segments blend once.
 - **Shaders** are Metal source in `EJSharedMetalContext.m`, compiled when the app starts. That way building doesn't need Xcode's separately downloaded Metal toolchain.
-- **Antialiasing** (`getContext('2d', {antialias: true})`) needs A9 or newer. On older GPUs, and in the simulator, it is turned off.
+- **Antialiasing** (`getContext('2d', {antialias: true})`) draws into a 2- or 4-sample texture, whichever the GPU supports. A small shader averages the samples into the canvas texture whenever that is read or drawn. This works on every Apple TV, unlike the store action that does it on newer GPUs.
 
 Textures cross between the two APIs as follows:
 
