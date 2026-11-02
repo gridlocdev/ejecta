@@ -1785,6 +1785,44 @@ window.__ejectaMakeWebGL2 = function( gl ) {
 		return sizedFormats[internalformat] || internalformat;
 	};
 
+	// WebGL 2 allows mipmaps and repeat wrapping at any texture size; WebGL 1
+	// only at powers of two, and samples other sizes as black. So textures
+	// that aren't get plain filters, clamp to their edges and skip
+	// generateMipmap, and keep the parameters asked for in case they become
+	// a power of two.
+	var textureState = new WeakMap();    // texture -> {npot, params}
+	var boundTextures = [], activeUnit = 0;
+	var plainFilters = {};
+	plainFilters[gl.NEAREST_MIPMAP_NEAREST] = plainFilters[gl.NEAREST_MIPMAP_LINEAR] = gl.NEAREST;
+	plainFilters[gl.LINEAR_MIPMAP_NEAREST] = plainFilters[gl.LINEAR_MIPMAP_LINEAR] = gl.LINEAR;
+	var isPowerOfTwo = function( n ) { return n > 0 && (n & (n - 1)) === 0; };
+	var boundTextureState = function() {
+		var texture = boundTextures[activeUnit];
+		if( !texture ) { return null; }
+		var state = textureState.get(texture);
+		if( !state ) {
+			state = {npot: false, params: {}};
+			state.params[gl.TEXTURE_WRAP_S] = state.params[gl.TEXTURE_WRAP_T] = gl.REPEAT;
+			textureState.set(texture, state);
+		}
+		return state;
+	};
+	var applyTextureParam = function( state, pname, value ) {
+		if( state.npot ) {
+			if( pname === gl.TEXTURE_MIN_FILTER ) { value = plainFilters[value] || value; }
+			else { value = gl.CLAMP_TO_EDGE; }
+		}
+		gl.texParameteri(gl.TEXTURE_2D, pname, value);
+	};
+	var setTextureSize = function( target, level, width, height ) {
+		var state = target === gl.TEXTURE_2D && level === 0 && boundTextureState();
+		if( !state ) { return; }
+		var npot = !(isPowerOfTwo(width) && isPowerOfTwo(height));
+		if( npot === state.npot ) { return; }
+		state.npot = npot;
+		for( var pname in state.params ) { applyTextureParam(state, +pname, state.params[pname]); }
+	};
+
 	var extra = {
 		// Vertex array objects
 		createVertexArray: function() { return vao.createVertexArrayOES(); },
@@ -1837,11 +1875,37 @@ window.__ejectaMakeWebGL2 = function( gl ) {
 			gl.linkProgram(program);
 		},
 
-		// Textures with sized formats
+		// Textures with sized formats, at any size
+		activeTexture: function( unit ) {
+			activeUnit = unit - gl.TEXTURE0;
+			gl.activeTexture(unit);
+		},
+		bindTexture: function( target, texture ) {
+			if( target === gl.TEXTURE_2D ) { boundTextures[activeUnit] = texture; }
+			gl.bindTexture(target, texture);
+		},
+		texParameteri: function( target, pname, value ) {
+			var state = target === gl.TEXTURE_2D && boundTextureState();
+			if( state && (pname === gl.TEXTURE_MIN_FILTER || pname === gl.TEXTURE_WRAP_S || pname === gl.TEXTURE_WRAP_T) ) {
+				state.params[pname] = value;
+				applyTextureParam(state, pname, value);
+			}
+			else {
+				gl.texParameteri(target, pname, value);
+			}
+		},
+		generateMipmap: function( target ) {
+			var state = target === gl.TEXTURE_2D && boundTextureState();
+			if( !state || !state.npot ) { gl.generateMipmap(target); }
+		},
 		texImage2D: function( target, level, internalformat ) {
 			var args = Array.prototype.slice.call(arguments);
 			args[2] = webglFormat(internalformat);
-			return gl.texImage2D.apply(gl, args);
+			var result = gl.texImage2D.apply(gl, args);
+			var source = args[5];
+			if( args.length >= 9 ) { setTextureSize(target, level, args[3], args[4]); }
+			else if( source ) { setTextureSize(target, level, source.width, source.height); }
+			return result;
 		},
 		texStorage2D: function( target, levels, internalformat, width, height ) {
 			var format = webglFormat(internalformat);
@@ -1849,6 +1913,7 @@ window.__ejectaMakeWebGL2 = function( gl ) {
 				gl.texImage2D(target, level, format, Math.max(1, width >> level), Math.max(1, height >> level),
 					0, format, gl.UNSIGNED_BYTE, null);
 			}
+			setTextureSize(target, 0, width, height);
 		},
 
 		// Samplers: accepted, but textures keep their own parameters

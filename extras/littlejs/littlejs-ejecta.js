@@ -23,6 +23,10 @@
 		var dpr = window.devicePixelRatio || 1;
 		var screenWidth = innerWidth * dpr, screenHeight = innerHeight * dpr;
 		if( screen.width !== screenWidth || screen.height !== screenHeight ) {
+			// The style keeps it at the screen's size in points; without it
+			// Ejecta shows each pixel as a point, too big on a 2x screen
+			screen.style.width = innerWidth + 'px';
+			screen.style.height = innerHeight + 'px';
 			screen.width = screenWidth;
 			screen.height = screenHeight;
 		}

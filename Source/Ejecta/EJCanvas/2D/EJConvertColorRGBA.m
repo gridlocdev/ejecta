@@ -254,7 +254,20 @@ EJColorRGBA JSValueToColorRGBA(JSContextRef ctx, JSValueRef value) {
 		str[5] = jsc[2];
 		c.hex = 0xff000000 | (unsigned int)strtol( str, NULL, 16 );
 	}
-	
+
+	// #f0f8 and #ff00ff80 formats, with alpha
+	else if( jsc[0] == '#' && (length == 5 || length == 9) ) {
+		int digits = (length == 5) ? 1 : 2;
+		for( int i = 0; i < 4; i++ ) {
+			char hex[3] = {
+				(char)jsc[1 + i * digits],
+				(char)jsc[digits * (i + 1)],
+				0
+			};
+			c.components[i] = (unsigned char)strtol( hex, NULL, 16 );
+		}
+	}
+
 	// rgb(255,0,255) or rgba(255,0,255,0.5) format
 	else if( (jsc[0] == 'r' || jsc[0] == 'R') && (jsc[1] == 'g' || jsc[1] == 'G') ) {
 		int component = 0;

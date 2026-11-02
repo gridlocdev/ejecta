@@ -26,6 +26,16 @@ function canvasTests() {
 	var px = rgba(ctx.getImageData(8, 8, 1, 1).data);
 	check('2d fillRect', same(px, [255, 0, 0, 255]), px);
 
+	// Hex colors with alpha, as LittleJS writes every color
+	ctx.clearRect(0, 0, 16, 16);
+	ctx.fillStyle = '#00ff0080';
+	ctx.fillRect(0, 0, 8, 16);
+	ctx.fillStyle = '#00f8';
+	ctx.fillRect(8, 0, 8, 16);
+	var long = rgba(ctx.getImageData(4, 8, 1, 1).data), short = rgba(ctx.getImageData(12, 8, 1, 1).data);
+	check('2d hex colors with alpha', same(long, [0, 255, 0, 128], 3) && same(short, [0, 0, 255, 136], 3),
+		long + ' / ' + short);
+
 	ctx.clearRect(0, 0, 16, 16);
 	ctx.fillStyle = '#0000ff';
 	ctx.beginPath();
@@ -175,6 +185,46 @@ function webgl2Tests() {
 			rgba(left) + ' / ' + rgba(right));
 	}
 	catch( e ) { check('webgl2 draw', false, e.message); }
+
+	try {
+		// A texture whose sides aren't powers of two, mipmapped as LittleJS
+		// does for smooth textures: WebGL 1 would sample it as black
+		var source = document.createElement('canvas');
+		source.width = 6;
+		source.height = 2;
+		var sourceContext = source.getContext('2d');
+		sourceContext.fillStyle = '#ff0000';
+		sourceContext.fillRect(0, 0, 6, 2);
+		gl.bindVertexArray(null);
+		var textured = compileProgram(gl,
+			'attribute vec2 p; varying vec2 uv; void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }',
+			'precision mediump float; uniform sampler2D s; varying vec2 uv; void main(){ gl_FragColor = texture2D(s, uv); }');
+		gl.useProgram(textured);
+		var triangle = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, triangle);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		var at = gl.getAttribLocation(textured, 'p');
+		gl.enableVertexAttribArray(at);
+		gl.vertexAttribPointer(at, 2, gl.FLOAT, false, 0, 0);
+		gl.activeTexture(gl.TEXTURE0);
+		var texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+		gl.generateMipmap(gl.TEXTURE_2D);
+		gl.clearColor(0, 0, 1, 1);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		var npot = new Uint8Array(4);
+		gl.readPixels(4, 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, npot);
+		check('webgl2 mipmapped texture of any size', same(rgba(npot), [255, 0, 0, 255]), rgba(npot));
+	}
+	catch( e ) { check('webgl2 mipmapped texture of any size', false, e.message); }
 }
 
 async function audioTests() {

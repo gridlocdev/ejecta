@@ -13,13 +13,11 @@
 	// not being interacted with by touch. ie. games with motion control.
 	application.idleTimerDisabled = YES;
 	
-	window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-	[self loadViewControllerWithScriptAtPath:@"index.js"];
-	
-	[window makeKeyAndVisible];
+	// The window is made by the SceneDelegate (named in Info.plist) once the scene connects
     return YES;
 }
 
+// Also called by ejecta.load() to start another script
 - (void)loadViewControllerWithScriptAtPath:(NSString *)path {
 	// Release any previous ViewController
 	window.rootViewController = nil;
@@ -39,5 +37,29 @@
     [super dealloc];
 }
 
+
+@end
+
+
+@implementation SceneDelegate
+@synthesize window;
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session
+	options:(UISceneConnectionOptions *)connectionOptions
+{
+	if( ![scene isKindOfClass:UIWindowScene.class] ) { return; }
+	
+	window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+	AppDelegate *app = (AppDelegate *)UIApplication.sharedApplication.delegate;
+	app.window = window;
+	[app loadViewControllerWithScriptAtPath:@"index.js"];
+	
+	[window makeKeyAndVisible];
+}
+
+- (void)dealloc {
+	[window release];
+	[super dealloc];
+}
 
 @end

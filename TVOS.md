@@ -31,6 +31,10 @@ just tv                 # build, install over Wi‑Fi and start it on the Apple 
 - **DOM emulation**: `appendChild`, `insertBefore` and `removeChild` return the node as in a browser, and children get `parentElement`. `document.hasFocus()` and `document.activeElement` exist.
 - **Console**: `console.error(error)` prints the error and its stack instead of `{}`. Debug builds can be inspected with Safari's Web Inspector.
 - **Gamepads**: on modern controllers, Options, Menu and the stick buttons now map to the standard buttons 8–11.
+- **UIScene lifecycle**: the app starts through a `SceneDelegate`. tvOS 27 stops apps at launch that don't adopt UIScene.
+- **Colors**: `#rgba` and `#rrggbbaa` hex colors are parsed (LittleJS's `Color.toString()` makes these). Before, they came out black.
+- **WebGL 2 textures of any size**: WebGL 2 allows mipmaps and repeat wrapping on textures whose sides aren't powers of two; WebGL 1 doesn't, and such textures drew black. The WebGL 2 layer now skips the mipmaps and clamps those textures instead. Smooth LittleJS sprite sheets need this.
+- **LittleJS shim**: `extras/littlejs/littlejs-ejecta.js` sets the screen canvas's style size, so a 2x screen shows the whole game, not its top-left quarter.
 
 ## Your own LittleJS game
 
@@ -64,4 +68,4 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 - **Audio graph limits**: up to 64 sounds at once, 64 effect nodes, and 16 connections out of each. Connecting a node to an `AudioParam` (modulation) does nothing, `AnalyserNode` reports silence, and a `WaveShaperNode`'s `oversample` is ignored. Reverb (`ConvolverNode`) output is 512 frames (about 11 ms) late.
 - **Ogg Opus** files aren't decoded unless tvOS's own decoder handles them; Ogg Vorbis is.
 - **WebGL still uses OpenGL ES.** Apple deprecated it but still ships it on tvOS. Moving WebGL to Metal would mean translating OpenGL to Metal underneath it (as ANGLE does), which isn't done.
-- **Tested in the tvOS Simulator, not yet on an Apple TV.** CI builds the app with Xcode 16.4 and runs `tools/device-tests` in a tvOS 18.5 Simulator: Canvas2D on Metal, WebGL 1 and 2, LittleJS on WebGL 2, audio with effects, Ogg and `fetch()` all pass there. The Simulator can't share surfaces between OpenGL and Metal, so the path an Apple TV takes to draw a WebGL canvas into a 2D one hasn't run yet. If it fails, the log says `Could not share a … texture` and drawing falls back to a slower pixel copy. Speed on a real Apple TV is unmeasured.
+- **Tested in the tvOS Simulator, not yet on an Apple TV.** CI builds the app with Xcode 16.4 and runs `tools/device-tests` in a tvOS 18.5 Simulator, and they pass in a tvOS 27.2 Simulator too: Canvas2D on Metal, WebGL 1 and 2, LittleJS on WebGL 2, audio with effects, Ogg and `fetch()` all pass there. The Simulator can't share surfaces between OpenGL and Metal, so the path an Apple TV takes to draw a WebGL canvas into a 2D one hasn't run yet. If it fails, the log says `Could not share a … texture` and drawing falls back to a slower pixel copy. Speed on a real Apple TV is unmeasured.

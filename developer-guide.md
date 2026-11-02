@@ -212,6 +212,7 @@ Ejecta's native WebGL is WebGL 1 on OpenGL ES 2, which can't share textures with
   - `round()` and `trunc()` get helper functions.
   - `layout(location=N)` on vertex inputs is applied with `bindAttribLocation` before linking.
 - **Sized texture formats** (`RGBA8`) map to their WebGL 1 formats, and `texStorage2D` allocates with `texImage2D`.
+- **Textures whose sides aren't powers of two** can't have mipmaps or repeat in WebGL 1. The wrapper tracks each texture's size and parameters, skips `generateMipmap` for these, and sets them to a plain filter and `CLAMP_TO_EDGE`. If an upload later makes the size a power of two, the parameters the game asked for come back.
 - **Samplers** are accepted, but a texture keeps its own parameters.
 - **Version strings**: `getParameter(VERSION)` says WebGL 2.0.
 
