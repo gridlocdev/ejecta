@@ -470,7 +470,10 @@ EJ_BIND_FUNCTION(copyTexImage2D, ctx, argc, argv) {
 	[targetTexture ensureMutableKeepPixels:NO forTarget:bindTarget];
 	[targetTexture bindToTarget:bindTarget];
 	
-	glCopyTexImage2D(target, level, internalformat, x, y, width, height, 0);
+	// From an antialiased canvas, copy the resolved pixels, as readPixels does
+	[renderingContext readPixels:^{
+		glCopyTexImage2D(target, level, internalformat, x, y, width, height, 0);
+	}];
 	
 	[self updateTexture:targetTexture jsTexture:activeTexture->jsTextures[slot]
 		oldTextureId:oldTextureId bindTarget:bindTarget];
@@ -491,7 +494,10 @@ EJ_BIND_FUNCTION(copyTexSubImage2D, ctx, argc, argv) {
 	[targetTexture ensureMutableKeepPixels:YES forTarget:bindTarget];
 	[targetTexture bindToTarget:bindTarget];
 	
-	glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
+	// From an antialiased canvas, copy the resolved pixels, as readPixels does
+	[renderingContext readPixels:^{
+		glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
+	}];
 	return NULL;
 }
 

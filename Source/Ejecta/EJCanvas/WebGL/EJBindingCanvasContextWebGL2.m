@@ -641,7 +641,9 @@ EJ_BIND_FUNCTION(copyTexSubImage3D, ctx, argc, argv) {
 	scriptView.currentRenderingContext = renderingContext;
 	
 	[self changeTextureAtTarget:target is3D:YES keepPixels:YES change:^{
-		glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		[renderingContext readPixels:^{
+			glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+		}];
 	}];
 	return NULL;
 }
