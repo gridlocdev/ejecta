@@ -52,7 +52,7 @@ function glConstant(name) {
 function constValue(arg) {
 	const v = arg.trim().replace(/^@/, '');
 	if (/^".*"$/.test(v)) return JSON.parse(v);
-	return /^-?[\d.]+$/.test(v) ? Number(v) : 0;
+	return /^-?[\d.]+$|^0x[\da-f]+$/i.test(v) ? Number(v) : 0;
 }
 for (const file of sourceFiles) {
 	const src = fs.readFileSync(file, 'utf8');
@@ -65,8 +65,9 @@ for (const file of sourceFiles) {
 		const name = impl.match(/^\s*(\w+)/)[1];
 		const members = membersOf[name] ||= {};
 		// WebGL's generated functions
-		const prefixes = {UNIFORM: 'uniform', UNIFORM_V: 'uniform', UNIFORM_MATRIX_V: 'uniformMatrix', VERTEXATTRIB_V: 'vertexAttrib'};
-		for (const m of impl.matchAll(/EJ_BIND_(UNIFORM|UNIFORM_V|UNIFORM_MATRIX_V|VERTEXATTRIB_V)\(\s*(\w+)/g))
+		const prefixes = {UNIFORM: 'uniform', UNIFORM_V: 'uniform', UNIFORM_MATRIX_V: 'uniformMatrix',
+			VERTEXATTRIB_V: 'vertexAttrib', CLEAR_BUFFER: 'clearBuffer'};
+		for (const m of impl.matchAll(/EJ_BIND_(UNIFORM|UNIFORM_V|UNIFORM_MATRIX_V|VERTEXATTRIB_V|CLEAR_BUFFER)\(\s*(\w+)/g))
 			members[prefixes[m[1]] + m[2]] = 'function';
 		for (const m of impl.matchAll(/EJ_MAP\(\s*EJ_BIND_(DELETE_OBJECT|IS_OBJECT)\s*,([^)]*)\)/g))
 			for (const object of m[2].split(',')) members[(m[1] === 'IS_OBJECT' ? 'is' : 'delete') + object.trim()] = 'function';
@@ -75,7 +76,7 @@ for (const file of sourceFiles) {
 			if (kind === 'CONST') members[prop] = {value: constValue(arg)};
 			else if (kind === 'CONST_GL') members[prop] = {value: glConstant(prop)};
 			else if (kind === 'EVENT') members['on' + prop] = 'prop';
-			else if (/^(UNIFORM|UNIFORM_V|UNIFORM_MATRIX_V|VERTEXATTRIB_V)$/.test(kind)) continue;
+			else if (/^(UNIFORM|UNIFORM_V|UNIFORM_MATRIX_V|VERTEXATTRIB_V|CLEAR_BUFFER)$/.test(kind)) continue;
 			else if (kind === 'FUNCTION' || kind.startsWith('FUNCTION_DIRECT')) members[prop] = 'function';
 			else if (kind === 'FUNCTION_NOT_IMPLEMENTED') members[prop] = 'notImplemented';
 			else members[prop] ??= 'prop';
@@ -210,7 +211,7 @@ for (const k of ['fillStyle', 'strokeStyle']) Context2D.prototype[k] = '#000';
 
 // WebGL: calls are checked against the bindings and recorded, nothing is drawn
 const webglExtensions = new Map();
-const WebGLContext = nativeClass('CanvasContextWebGL', {
+const webgl = {
 	getExtension(name) {
 		count('CanvasContextWebGL.getExtension:' + name);
 		const cls = 'EJBindingWebGLExtension' + name;
@@ -232,26 +233,38 @@ const WebGLContext = nativeClass('CanvasContextWebGL', {
 	getShaderParameter(shader, pname) { return pname === this.SHADER_TYPE ? shader._type : true; },
 	getProgramParameter() { return true; },
 	getShaderInfoLog() { return ''; }, getProgramInfoLog() { return ''; },
-	getParameter(pname) { return pname === this.MAX_TEXTURE_SIZE ? 4096 : 0; },
+	getParameter(pname) {
+		if (pname === this.VERSION) return this._version === 2 ? 'WebGL 2.0' : 'WebGL 1.0';
+		if (pname === this.SHADING_LANGUAGE_VERSION) return this._version === 2 ? 'WebGL GLSL ES 3.00' : 'WebGL GLSL ES 1.0';
+		return pname === this.MAX_TEXTURE_SIZE ? 4096 : 0;
+	},
+	getShaderPrecisionFormat() { return {rangeMin: 127, rangeMax: 127, precision: 23}; },
 	getUniformLocation() { return {}; }, getAttribLocation() { return 0; },
 	getContextAttributes() { return {alpha: true, antialias: false, premultipliedAlpha: true}; },
 	isContextLost() { return false; },
 	checkFramebufferStatus() { return this.FRAMEBUFFER_COMPLETE; },
 	bindAttribLocation(program, location, name) { (program._locations ||= {})[name] = location; },
-}, function (canvas) { this.canvas = canvas; });
+};
+const WebGLContext = nativeClass('CanvasContextWebGL', webgl, function (canvas) {
+	this.canvas = canvas;
+	this._version = 1;
+});
+// As EJBindingCanvas.m: a native WebGL 2 binding with every WebGL 1 call
+const WebGL2Context = nativeClass('CanvasContextWebGL2', {
+	...webgl,
+	createVertexArray() { return {}; }, createSampler() { return {}; }, createQuery() { return {}; },
+	createTransformFeedback() { return {}; }, fenceSync() { return {}; },
+}, function (canvas) {
+	this.canvas = canvas;
+	this._version = 2;
+});
 
 const Canvas = nativeClass('Canvas', {
 	getContext(type, attributes) {
 		count('Canvas.getContext:' + type);
-		if (type === '2d') return this._mode === 'webgl' ? null : (this._mode = '2d', this._ctx ||= new Context2D(this));
-		if (/webgl2/.test(type)) {
-			// As EJBindingCanvas.m: Ejecta.js wraps the WebGL 1 context
-			if (this._gl2) return this._gl2;
-			const gl = this.getContext('webgl', attributes);
-			const maker = context.__ejectaMakeWebGL2;
-			return gl && typeof maker === 'function' ? (this._gl2 = maker(gl) || null) : null;
-		}
-		if (/webgl/.test(type)) return this._mode === '2d' ? null : (this._mode = 'webgl', this._gl ||= new WebGLContext(this));
+		if (type === '2d') return this._mode && this._mode !== '2d' ? null : (this._mode = '2d', this._ctx ||= new Context2D(this));
+		if (/webgl2/.test(type)) return this._mode && this._mode !== 'webgl2' ? null : (this._mode = 'webgl2', this._gl ||= new WebGL2Context(this));
+		if (/webgl/.test(type)) return this._mode && this._mode !== 'webgl' ? null : (this._mode = 'webgl', this._gl ||= new WebGLContext(this));
 	},
 	toDataURL() { return 'data:image/png;base64,'; },
 }, function () {

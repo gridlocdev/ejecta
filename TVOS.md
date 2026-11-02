@@ -26,14 +26,18 @@ just tv                 # build, install over Wi‑Fi and start it on the Apple 
 - **Canvas**: `ctx.ellipse()` and dashed lines (`setLineDash()`, `getLineDash()`, `lineDashOffset`) are implemented.
 - **Typed arrays**: native code now reads a typed array view from its own start. Before, a `subarray()` passed to WebGL's `bufferData`, `readPixels` or similar was read from the start of its whole buffer.
 - **Canvas style**: `canvas.style.width = "100%"` (and height, left, top) is now relative to the screen instead of being read as 100 px.
-- **WebGL 2**: `getContext("webgl2")` gives a WebGL 2 context built on WebGL 1 and its extensions: vertex array objects, instancing, and GLSL ES 3.00 shaders, translated to 1.00 with their `layout(location)`s kept. It covers 2D engines like LittleJS; see [How WebGL 2 works here](developer-guide.md#how-webgl-2-works-here) for what it doesn't cover.
-- **WebGL fix**: offscreen WebGL canvases drew to no framebuffer until their size was set a second time, so nothing they drew showed. Fixed.
+- **WebGL 2**: `getContext("webgl2")` gives a native WebGL 2 context on OpenGL ES 3. GLSL ES 3.00 shaders compile as written. It has 3D and array textures, sized, integer and float formats, samplers, multiple render targets, multisampled framebuffers and blits, uniform buffers, queries, fences and transform feedback. See [How WebGL 2 works here](developer-guide.md#how-webgl-2-works-here).
+- **WebGL fixes**:
+  - Offscreen WebGL canvases drew to no framebuffer until their size was set a second time, so nothing they drew showed.
+  - `readPixels` on an antialiased canvas failed.
+  - `getParameter(VIEWPORT)`, `SCISSOR_BOX` and the other array results were wrong or four times too long.
+  - `getUniform` read integer vectors as floats and missed samplers and array elements.
+  - `framebufferTexture2D` changed the active texture binding.
 - **DOM emulation**: `appendChild`, `insertBefore` and `removeChild` return the node as in a browser, and children get `parentElement`. `document.hasFocus()` and `document.activeElement` exist.
 - **Console**: `console.error(error)` prints the error and its stack instead of `{}`. Debug builds can be inspected with Safari's Web Inspector.
 - **Gamepads**: on modern controllers, Options, Menu and the stick buttons now map to the standard buttons 8–11.
 - **UIScene lifecycle**: the app starts through a `SceneDelegate`. tvOS 27 stops apps at launch that don't adopt UIScene.
 - **Colors**: `#rgba` and `#rrggbbaa` hex colors are parsed (LittleJS's `Color.toString()` makes these). Before, they came out black.
-- **WebGL 2 textures of any size**: WebGL 2 allows mipmaps and repeat wrapping on textures whose sides aren't powers of two; WebGL 1 doesn't, and such textures drew black. The WebGL 2 layer now skips the mipmaps and clamps those textures instead. Smooth LittleJS sprite sheets need this.
 - **LittleJS shim**: `extras/littlejs/littlejs-ejecta.js` sets the screen canvas's style size, so a 2x screen shows the whole game, not its top-left quarter.
 
 ## Your own LittleJS game
@@ -64,7 +68,7 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 
 ## Known gaps
 
-- **WebGL 2 is a subset.** No integer or 3D textures, uniform buffers, transform feedback, multiple render targets or `blitFramebuffer`, and no GLSL ES 3.00 features without a 1.00 equivalent (`texelFetch`, `textureSize`, bit operations). LittleJS's 2D rendering doesn't need them; its 3D plugin does.
+- **WebGL 2 gaps**: there are no compressed textures, and the only float render target extension is `EXT_color_buffer_half_float`. Query results don't wait for the next frame as browsers make them, and `clientWaitSync` never blocks.
 - **Audio graph limits**: up to 64 sounds at once, 64 effect nodes, and 16 connections out of each. Connecting a node to an `AudioParam` (modulation) does nothing, `AnalyserNode` reports silence, and a `WaveShaperNode`'s `oversample` is ignored. Reverb (`ConvolverNode`) output is 512 frames (about 11 ms) late.
 - **Ogg Opus** files aren't decoded unless tvOS's own decoder handles them; Ogg Vorbis is.
 - **WebGL still uses OpenGL ES.** Apple deprecated it but still ships it on tvOS. Moving WebGL to Metal would mean translating OpenGL to Metal underneath it (as ANGLE does), which isn't done.
