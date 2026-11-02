@@ -230,7 +230,8 @@ async function littlejsTests() {
 
 async function run() {
 	console.log('Ejecta device tests: ' + navigator.userAgent);
-	var steps = [canvasTests, webglTests, webgl2Tests, audioTests, fetchTests, littlejsTests];
+	ejecta.include('canvas2d-test.js');
+	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, audioTests, fetchTests, littlejsTests];
 	for( var i = 0; i < steps.length; i++ ) {
 		try { await steps[i](); }
 		catch( e ) { check(steps[i].name, false, e + ' ' + e.stack); }
