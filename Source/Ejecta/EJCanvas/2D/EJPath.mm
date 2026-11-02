@@ -374,6 +374,10 @@ typedef std::vector<subpath_t> path_t;
 	
 	for( path_t::iterator sp = paths.begin(); ; ++sp ) {
 		subpath_t &path = sp==paths.end()?currentPath:*sp;
+		if( path.points.size() < 3 ) {
+			if( sp==paths.end() ) break;
+			continue;
+		}
 		
 		glVertexAttribPointer(kEJGLProgram2DAttributePos, 2, GL_FLOAT, GL_FALSE, 0, &(path.points).front());
 		

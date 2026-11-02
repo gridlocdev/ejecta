@@ -77,10 +77,18 @@ def main():
                 print('\nThread stacks (sample):\n' + '\n'.join(sample.splitlines()[:250]))
             else:
                 print('The app is not running: it crashed')
+                # The crash report is written a few seconds after the crash
                 reports = os.path.expanduser('~/Library/Logs/DiagnosticReports')
-                crashes = sorted([f for f in os.listdir(reports) if 'Ejecta' in f], reverse=True) if os.path.isdir(reports) else []
+                for attempt in range(20):
+                    crashes = [os.path.join(reports, f) for f in os.listdir(reports) if 'Ejecta' in f] if os.path.isdir(reports) else []
+                    if crashes:
+                        break
+                    time.sleep(1)
                 if crashes:
-                    print(open(os.path.join(reports, crashes[0]), errors='replace').read()[:8000])
+                    newest = max(crashes, key=os.path.getmtime)
+                    print('\n' + newest + ':\n' + open(newest, errors='replace').read()[:12000])
+                else:
+                    print('No crash report in', reports)
             process.terminate()
             return 1
         process.terminate()
