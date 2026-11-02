@@ -146,6 +146,8 @@ function webgl2Tests() {
 	canvas.width = canvas.height = 8;
 	var gl = canvas.getContext('webgl2');
 	if( !gl ) { return skip('webgl2', 'getContext("webgl2") returned null'); }
+	var firstError = gl.getError();
+	check('webgl2 new context has no GL error', firstError === gl.NO_ERROR, '0x' + firstError.toString(16));
 	check('webgl2 context', typeof gl.drawArraysInstanced === 'function' && typeof gl.createVertexArray === 'function');
 	check('webgl2 version', /^WebGL 2\.0/.test(gl.getParameter(gl.VERSION)) &&
 		/^WebGL GLSL ES 3\.00/.test(gl.getParameter(gl.SHADING_LANGUAGE_VERSION)),
@@ -489,6 +491,23 @@ function webgl2FramebufferTests() {
 	test('webgl2 typed array parameters', function() {
 		var viewport = gl.getParameter(gl.VIEWPORT);
 		check('webgl2 VIEWPORT has 4 values', viewport.length === 4 && viewport[2] === 8, viewport.length + ': ' + Array.from(viewport));
+	});
+
+	test('webgl2 float render targets', function() {
+		if( !gl.getExtension('EXT_color_buffer_float') ) {
+			return skip('webgl2 EXT_color_buffer_float', 'not offered');
+		}
+		var target = textureFramebuffer(gl, gl.RGBA32F, 1, 4);
+		var status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+		check('webgl2 RGBA32F framebuffer complete', status === gl.FRAMEBUFFER_COMPLETE, '0x' + status.toString(16) + ' error 0x' + gl.getError().toString(16));
+		gl.viewport(0, 0, 4, 4);
+		drawFragment(gl, 'void main(){ o = vec4(2.5, -1, .25, 1); }');
+		var pixel = new Float32Array(4);
+		gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.FLOAT, pixel);
+		check('webgl2 RGBA32F keeps values outside 0-1', equal(Array.from(pixel), [2.5, -1, .25, 1]), Array.from(pixel));
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.deleteFramebuffer(target.framebuffer);
+		gl.deleteTexture(target.textures[0]);
 	});
 
 	test('webgl2 multiple render targets', function() {

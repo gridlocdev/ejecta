@@ -26,13 +26,14 @@ just tv                 # build, install over Wi‑Fi and start it on the Apple 
 - **Canvas**: `ctx.ellipse()` and dashed lines (`setLineDash()`, `getLineDash()`, `lineDashOffset`) are implemented.
 - **Typed arrays**: native code now reads a typed array view from its own start. Before, a `subarray()` passed to WebGL's `bufferData`, `readPixels` or similar was read from the start of its whole buffer.
 - **Canvas style**: `canvas.style.width = "100%"` (and height, left, top) is now relative to the screen instead of being read as 100 px.
-- **WebGL 2**: `getContext("webgl2")` gives a native WebGL 2 context on OpenGL ES 3. GLSL ES 3.00 shaders compile as written. It has 3D and array textures, sized, integer and float formats, samplers, multiple render targets, multisampled framebuffers and blits, uniform buffers, queries, fences and transform feedback. See [How WebGL 2 works here](developer-guide.md#how-webgl-2-works-here).
+- **WebGL 2**: `getContext("webgl2")` gives a native WebGL 2 context on OpenGL ES 3. GLSL ES 3.00 shaders compile as written. It has 3D and array textures, sized, integer and float formats, samplers, multiple render targets, multisampled framebuffers and blits, uniform buffers, queries, fences and transform feedback. three.js r187 runs on it: on an Apple TV 4K, its standard and physical materials, environment maps, shadows, instancing, skinning, morphs and render targets draw at 60 fps in 4K. See [How WebGL 2 works here](developer-guide.md#how-webgl-2-works-here).
 - **WebGL fixes**:
   - Offscreen WebGL canvases drew to no framebuffer until their size was set a second time, so nothing they drew showed.
   - `readPixels` on an antialiased canvas failed.
   - `getParameter(VIEWPORT)`, `SCISSOR_BOX` and the other array results were wrong or four times too long.
   - `getUniform` read integer vectors as floats and missed samplers and array elements.
   - `framebufferTexture2D` changed the active texture binding.
+  - Setting a WebGL screen canvas's size and style one value at a time (as three.js does) could ask for a drawable larger than the GPU allows. That failed and left a GL error for the page to find.
 - **DOM emulation**: `appendChild`, `insertBefore` and `removeChild` return the node as in a browser, and children get `parentElement`. `document.hasFocus()` and `document.activeElement` exist.
 - **Console**: `console.error(error)` prints the error and its stack instead of `{}`. Debug builds can be inspected with Safari's Web Inspector.
 - **Gamepads**: on modern controllers, Options, Menu and the stick buttons now map to the standard buttons 8–11.
@@ -68,7 +69,8 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 
 ## Known gaps
 
-- **WebGL 2 gaps**: there are no compressed textures, and the only float render target extension is `EXT_color_buffer_half_float`. Query results don't wait for the next frame as browsers make them, and `clientWaitSync` never blocks.
+- **WebGL 2 gaps**: there are no compressed textures. `EXT_color_buffer_float` is offered only where the GPU can render to 32-bit floats, and Apple TV GPUs can't, so float render targets are half floats (`EXT_color_buffer_half_float`); three.js warns once and uses them. Query results don't wait for the next frame as browsers make them, and `clientWaitSync` never blocks.
+- **The Simulator crashes on some three.js scenes.** Its software OpenGL renderer crashes drawing with a three.js environment map (PMREM), and draws 3D at a few frames per second. The same scenes run at 60 fps on an Apple TV; test 3D there.
 - **Audio graph limits**: up to 64 sounds at once, 64 effect nodes, and 16 connections out of each. Connecting a node to an `AudioParam` (modulation) does nothing, `AnalyserNode` reports silence, and a `WaveShaperNode`'s `oversample` is ignored. Reverb (`ConvolverNode`) output is 512 frames (about 11 ms) late.
 - **Ogg Opus** files aren't decoded unless tvOS's own decoder handles them; Ogg Vorbis is.
 - **WebGL still uses OpenGL ES.** Apple deprecated it but still ships it on tvOS. Moving WebGL to Metal would mean translating OpenGL to Metal underneath it (as ANGLE does), which isn't done.

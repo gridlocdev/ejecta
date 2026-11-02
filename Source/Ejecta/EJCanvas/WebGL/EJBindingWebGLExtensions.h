@@ -61,6 +61,9 @@ BOOL EJWebGLExtensionIsAvailable(const EJWebGLExtensionName *extension, int webg
 @interface EJBindingWebGLExtensionEXT_color_buffer_half_float : EJBindingWebGLExtension
 @end;
 
+@interface EJBindingWebGLExtensionEXT_color_buffer_float : EJBindingWebGLExtension
+@end;
+
 @interface EJBindingWebGLExtensionOES_element_index_uint : EJBindingWebGLExtension
 @end;
 

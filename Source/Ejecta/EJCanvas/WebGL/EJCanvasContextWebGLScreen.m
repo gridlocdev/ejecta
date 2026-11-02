@@ -55,6 +55,13 @@
 	CGRect frame = self.frame;
 	float contentScale = MAX(width/frame.size.width, height/frame.size.height);
 	
+	// Keep the drawable within the largest renderbuffer. Pages set the
+	// canvas size and style one value at a time, so between two of them
+	// the scale can ask for more than that, and the renderbuffer would fail.
+	GLint maxSize;
+	glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxSize);
+	contentScale = MIN(contentScale, maxSize / MAX(frame.size.width, frame.size.height));
+	
 	NSLog(
 		@"Creating ScreenCanvas (WebGL): "
 			@"size: %dx%d, "

@@ -210,7 +210,8 @@ Textures cross between the two APIs as follows:
 - **The canvas's own framebuffer** is a framebuffer object in OpenGL. When it is bound, `drawBuffers`, `readBuffer`, `invalidateFramebuffer` and `getFramebufferAttachmentParameter` map `BACK`, `COLOR`, `DEPTH` and `STENCIL` to its attachments.
 - **Antialiased canvases** draw into a multisampled framebuffer. It is resolved into the canvas's framebuffer before it's shown, read with `readPixels`, or drawn into a 2D canvas.
 - **Texture uploads** from images, canvases and typed arrays follow `UNPACK_FLIP_Y_WEBGL` and `UNPACK_PREMULTIPLY_ALPHA_WEBGL`. They also follow the unpack state: row length, skipped rows, pixels and images, and image height. They can read from a `PIXEL_UNPACK_BUFFER`.
-- **Not done**: compressed textures, and float render targets beyond `EXT_color_buffer_half_float`. Query results are ready as soon as the GPU has them; browsers hold them until the next frame. `clientWaitSync` never blocks: `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0.
+- **Float render targets**: `EXT_color_buffer_half_float` always. `EXT_color_buffer_float` only when OpenGL lists it, or when textures of all its formats make complete framebuffers; Apple TV GPUs and the Simulator fail that check.
+- **Not done**: compressed textures. Query results are ready as soon as the GPU has them; browsers hold them until the next frame. `clientWaitSync` never blocks: `MAX_CLIENT_WAIT_TIMEOUT_WEBGL` is 0.
 
 `tools/device-tests` draws with every part of this and reads the pixels back.
 

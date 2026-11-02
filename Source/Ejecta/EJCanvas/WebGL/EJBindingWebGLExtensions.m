@@ -8,6 +8,7 @@
 const EJWebGLExtensionName EJWebGLExtensions[] = {
 	{"EXT_texture_filter_anisotropic", "GL_EXT_texture_filter_anisotropic", EJ_WEBGL_1 | EJ_WEBGL_2},
 	{"EXT_color_buffer_half_float", "GL_EXT_color_buffer_half_float", EJ_WEBGL_1 | EJ_WEBGL_2},
+	{"EXT_color_buffer_float", "GL_EXT_color_buffer_float", EJ_WEBGL_2},
 	{"OES_texture_float", NULL, EJ_WEBGL_1},
 	{"OES_texture_half_float", NULL, EJ_WEBGL_1},
 	{"OES_texture_half_float_linear", NULL, EJ_WEBGL_1},
@@ -19,12 +20,52 @@ const EJWebGLExtensionName EJWebGLExtensions[] = {
 
 const int EJWebGLExtensionsCount = sizeof(EJWebGLExtensions) / sizeof(EJWebGLExtensionName);
 
+// Whether the GPU renders to every format EXT_color_buffer_float makes
+// renderable, for drivers that can but don't list the extension. It uses
+// textures: OpenGL ES 3 accepts every one of these formats for a texture,
+// and a texture it can't render to only makes the framebuffer incomplete,
+// where a renderbuffer would raise an error the page would see.
+static BOOL EJFloatColorBuffersRenderable() {
+	static int renderable = -1;
+	if( renderable >= 0 ) { return renderable; }
+	
+	GLint previousFramebuffer, previousTexture;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+	
+	GLuint framebuffer;
+	glGenFramebuffers(1, &framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+	
+	GLenum formats[] = {GL_R16F, GL_RG16F, GL_RGBA16F, GL_R32F, GL_RG32F, GL_RGBA32F, GL_R11F_G11F_B10F};
+	renderable = 1;
+	for( int i = 0; i < sizeof(formats)/sizeof(formats[0]) && renderable; i++ ) {
+		GLuint texture;
+		glGenTextures(1, &texture);
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glTexStorage2D(GL_TEXTURE_2D, 1, formats[i], 4, 4);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+		renderable = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+		glDeleteTextures(1, &texture);
+	}
+	
+	glDeleteFramebuffers(1, &framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+	glBindTexture(GL_TEXTURE_2D, previousTexture);
+	return renderable;
+}
+
 BOOL EJWebGLExtensionIsAvailable(const EJWebGLExtensionName *extension, int webglVersion) {
 	if( !(extension->versions & webglVersion) ) { return NO; }
 	if( !extension->internalName ) { return YES; }
 	
 	const char *allExtensions = (const char *)glGetString(GL_EXTENSIONS);
-	return allExtensions && strstr(allExtensions, extension->internalName) != NULL;
+	if( allExtensions && strstr(allExtensions, extension->internalName) != NULL ) { return YES; }
+	
+	if( strcmp(extension->exposedName, "EXT_color_buffer_float") == 0 ) {
+		return EJFloatColorBuffersRenderable();
+	}
+	return NO;
 }
 
 
@@ -85,6 +126,10 @@ EJ_BIND_CONST(RGBA16F_EXT, GL_RGBA16F);
 EJ_BIND_CONST(RGB16F_EXT, GL_RGB16F);
 EJ_BIND_CONST(FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE);
 EJ_BIND_CONST(UNSIGNED_NORMALIZED_EXT, GL_UNSIGNED_NORMALIZED);
+@end
+
+
+@implementation EJBindingWebGLExtensionEXT_color_buffer_float
 @end
 
 
