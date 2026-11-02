@@ -8,7 +8,7 @@ the app with its console attached, and prints everything it logs. Exits 0 once
 the app logs a line containing "DONE" with no "FAIL" lines before it, and 1 on
 a FAIL, a crash or a timeout. The simulator is deleted afterwards.
 """
-import json, os, select, subprocess, sys, time
+import json, os, queue, subprocess, sys, threading, time
 
 def simctl(*args, check=True):
     return subprocess.run(['xcrun', 'simctl', *args], check=check, capture_output=True, text=True)
@@ -45,21 +45,28 @@ def main():
         process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
                                     udid, bundle_id], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, env=env, bufsize=1)
+        # A reader thread, as select() on the pipe misses lines already in
+        # Python's buffer once the app goes quiet
+        lines = queue.Queue()
+        def read():
+            for line in process.stdout:
+                lines.put(line)
+            lines.put(None)  # the app exited
+        threading.Thread(target=read, daemon=True).start()
         failed, done = [], False
         deadline = time.time() + timeout
         while time.time() < deadline:
-            ready, _, _ = select.select([process.stdout], [], [], 1)
-            if ready:
-                line = process.stdout.readline()
-                if not line:
-                    break  # the app exited
-                print(line.rstrip(), flush=True)
-                if 'FAIL ' in line:
-                    failed.append(line.strip())
-                if 'DONE' in line:
-                    done = True
-                    break
-            elif process.poll() is not None:
+            try:
+                line = lines.get(timeout=1)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            print(line.rstrip(), flush=True)
+            if 'FAIL ' in line:
+                failed.append(line.strip())
+            if 'DONE' in line:
+                done = True
                 break
         if not done:
             print('\nThe tests did not finish: crash or timeout after %d s' % timeout)
