@@ -96,11 +96,20 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)create {
-	if( msaaEnabled && metal.maxSamples < 2 ) {
-		NSLog(@"Warning: Antialiasing is not available on this device");
-		msaaEnabled = NO;
+	// 2 or 4 samples, whichever the GPU has (the simulator only has 4)
+	if( msaaEnabled ) {
+		int samples = msaaSamples <= 2 ? 2 : 4;
+		if( ![metal.device supportsTextureSampleCount:samples] ) {
+			samples = (samples == 2) ? 4 : 2;
+		}
+		if( [metal.device supportsTextureSampleCount:samples] ) {
+			msaaSamples = samples;
+		}
+		else {
+			NSLog(@"Warning: Antialiasing is not available on this device");
+			msaaEnabled = NO;
+		}
 	}
-	msaaSamples = MIN(msaaSamples, metal.maxSamples);
 	[self resizeToWidth:width height:height];
 }
 

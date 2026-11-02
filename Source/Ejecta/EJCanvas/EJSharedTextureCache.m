@@ -27,6 +27,7 @@ static EJSharedTextureCache *sharedTextureCache;
 		EJTexture *texture = [textures objectForKey:key];
 		if( now - texture.lastUsed > seconds ) {
 			[texture maybeReleaseStorage];
+			[texture maybeReleaseMetalStorage];
 		}
 	}
 }

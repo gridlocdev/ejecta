@@ -445,10 +445,14 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 		}
 		[currentRenderingContext release];
 		
-		// Switch GL Context if different. Canvas2D contexts have none; the
-		// current one stays current for OpenGL resources.
-		if( renderingContext.glContext && renderingContext.glContext != glCurrentContext ) {
-			glCurrentContext = renderingContext.glContext;
+		// Switch GL Context if different. Canvas2D contexts have none; for
+		// them the shared context is current, so OpenGL resources can be made
+		// and a WebGL context can be freed without being current.
+		EAGLContext *newGLContext = renderingContext.glContext
+			? renderingContext.glContext
+			: openGLContext.glContext2D;
+		if( newGLContext != glCurrentContext ) {
+			glCurrentContext = newGLContext;
 			[EAGLContext setCurrentContext:glCurrentContext];
 		}
 		

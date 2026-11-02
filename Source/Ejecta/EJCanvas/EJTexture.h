@@ -55,11 +55,13 @@
 	
 	BOOL forWebGL;
 	BOOL isMetalRenderTarget;
+	BOOL isGLRenderTarget;
 	id<MTLTexture> metalTexture;
 	NSTimeInterval metalLastUsed;
 	
 	// IOSurface shared by OpenGL and Metal, for offscreen WebGL canvases
 	CVPixelBufferRef interopPixelBuffer;
+	CVOpenGLESTextureCacheRef interopGLCache;
 	CVOpenGLESTextureRef interopGLTexture;
 	CVMetalTextureRef interopMetalTexture;
 	id<MTLCommandBuffer> metalReader;
@@ -79,8 +81,10 @@
 - (id)initAsMetalRenderTargetWithWidth:(int)widthp height:(int)heightp;
 // Wraps a Metal texture, e.g. a copy of a canvas
 - (id)initWithMetalTexture:(id<MTLTexture>)texture;
-// The pixels of an offscreen WebGL canvas: OpenGL renders, Metal samples
+// The pixels of an offscreen WebGL canvas: OpenGL renders, Metal samples.
+// Made with the WebGL context that renders into it current.
 - (id)initAsInteropRenderTargetWithWidth:(int)widthp height:(int)heightp;
+@property (readonly, nonatomic) BOOL isInterop;
 
 // Called by Canvas2D when it draws with this texture, and by WebGL before it
 // renders into it again

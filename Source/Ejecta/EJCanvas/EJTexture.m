@@ -244,9 +244,14 @@ typedef struct {
 		};
 		CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault, MAX(width, 1), MAX(height, 1),
 			kCVPixelFormatType_32BGRA, (CFDictionaryRef)attributes, &interopPixelBuffer);
+		
+		// The OpenGL texture is made in the context that renders into it
+		if( result == kCVReturnSuccess ) {
+			result = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, EAGLContext.currentContext, NULL, &interopGLCache);
+		}
 		if( result == kCVReturnSuccess ) {
 			result = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-				EJSharedOpenGLContext.instance.textureCache, interopPixelBuffer, NULL,
+				interopGLCache, interopPixelBuffer, NULL,
 				GL_TEXTURE_2D, GL_RGBA, MAX(width, 1), MAX(height, 1), GL_BGRA_EXT, GL_UNSIGNED_BYTE, 0, &interopGLTexture);
 		}
 		if( result == kCVReturnSuccess ) {
@@ -265,6 +270,7 @@ typedef struct {
 			// canvas then reads its pixels back
 			NSLog(@"Warning: Could not share a %dx%d texture between OpenGL and Metal (%d)", width, height, result);
 			[self releaseInterop];
+			isGLRenderTarget = YES;
 			[self createWithPixels:NULL format:GL_RGBA];
 		}
 		glBindTexture(GL_TEXTURE_2D, boundTexture);
@@ -273,9 +279,18 @@ typedef struct {
 }
 
 - (void)releaseInterop {
-	if( interopMetalTexture ) { CFRelease(interopMetalTexture); interopMetalTexture = NULL; }
+	if( interopMetalTexture ) {
+		CFRelease(interopMetalTexture);
+		interopMetalTexture = NULL;
+		CVMetalTextureCacheFlush(EJSharedMetalContext.instance.textureCache, 0);
+	}
 	if( interopGLTexture ) { CFRelease(interopGLTexture); interopGLTexture = NULL; }
+	if( interopGLCache ) { CFRelease(interopGLCache); interopGLCache = NULL; }
 	if( interopPixelBuffer ) { CVPixelBufferRelease(interopPixelBuffer); interopPixelBuffer = NULL; }
+}
+
+- (BOOL)isInterop {
+	return !!interopPixelBuffer;
 }
 
 - (id)initWithUIImage:(UIImage *)image {
@@ -298,10 +313,7 @@ typedef struct {
 	[textureStorage release];
 	[metalTexture release];
 	[metalReader release];
-	if( interopPixelBuffer ) {
-		[self releaseInterop];
-		CVOpenGLESTextureCacheFlush(EJSharedOpenGLContext.instance.textureCache, 0);
-	}
+	[self releaseInterop];
 	[super dealloc];
 }
 
@@ -364,7 +376,7 @@ typedef struct {
 }
 
 - (BOOL)isDynamic {
-	return fbo || isMetalRenderTarget || interopPixelBuffer;
+	return fbo || isMetalRenderTarget || isGLRenderTarget || interopPixelBuffer;
 }
 
 // Loads a lazyLoaded texture into whichever API it lives in
@@ -467,17 +479,27 @@ typedef struct {
 			copy->metalTexture = source ? [EJSharedMetalContext.instance newCopyOfTexture:source] : nil;
 			[copy->textureStorage release];
 			copy->textureStorage = nil;
-			copy->drawFlippedY = drawFlippedY;
+			
+			// WebGL waits for this copy before it draws into the surface again
+			[self markMetalRead:EJSharedMetalContext.instance.commandBuffer];
 		}
 		else {
+			// An OpenGL texture without a shared surface: a Metal copy of its pixels
+			[copy->textureStorage release];
+			copy->textureStorage = nil;
 			[copy createWithPixels:self.pixels format:format];
 		}
+		copy->drawFlippedY = drawFlippedY;
 	}
 
 	return copy;
 }
 
 - (void)createWithTexture:(EJTexture *)other {
+	// WebGL needs the OpenGL texture; make it if the other one only has
+	// Metal. This loads a lazy image, so take its size after.
+	EJTextureStorage *otherStorage = forWebGL ? other.glStorage : other->textureStorage;
+	[otherStorage retain];
 	[textureStorage release];
 	[fullPath release];
 	
@@ -490,12 +512,8 @@ typedef struct {
 	lazyLoaded = other->lazyLoaded;
 	dimensionsKnown = other->dimensionsKnown;
 	
-	if( forWebGL ) {
-		// WebGL needs the OpenGL texture; make it if the other one only has Metal
-		textureStorage = [other.glStorage retain];
-	}
-	else {
-		textureStorage = [other->textureStorage retain];
+	textureStorage = otherStorage;
+	if( !forWebGL ) {
 		[metalTexture release];
 		metalTexture = [other->metalTexture retain];
 	}
@@ -708,18 +726,13 @@ typedef struct {
 	GLuint tempFramebuffer;
 	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFrameBuffer );
 	
-	// If this texture doesn't have an FBO (i.e. its not used as the backing store
-	// for an offscreen canvas2d), we have to create a new, temporary framebuffer
-	// containing the texture. We can then read the pixel data using glReadPixels
-	// as usual
-	if( !fbo ) {
-		glGenFramebuffers(1, &tempFramebuffer);
-		glBindFramebuffer(GL_FRAMEBUFFER, tempFramebuffer);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureStorage.textureId, 0);
-	}
-	else {
-		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-	}
+	// Attach the texture to a temporary framebuffer and read it with
+	// glReadPixels. Not the canvas's own framebuffer, even if it has one:
+	// framebuffers belong to one context, and this may run in another
+	// (textures are shared by all of them).
+	glGenFramebuffers(1, &tempFramebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, tempFramebuffer);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureStorage.textureId, 0);
 	
 	int size = width * height * EJGetBytesPerPixel(GL_UNSIGNED_BYTE, format);
 	NSMutableData *data = [NSMutableData dataWithLength:size];
@@ -728,9 +741,7 @@ typedef struct {
 	glBindFramebuffer(GL_FRAMEBUFFER, boundFrameBuffer);
 	
 	
-	if( !fbo ) {
-		glDeleteFramebuffers(1, &tempFramebuffer);
-	}
+	glDeleteFramebuffers(1, &tempFramebuffer);
 	
 	return data;
 }

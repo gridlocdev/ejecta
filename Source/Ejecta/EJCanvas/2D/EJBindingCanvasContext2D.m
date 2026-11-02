@@ -369,6 +369,10 @@ EJ_BIND_FUNCTION(createRadialGradient, ctx, argc, argv) {
 
 EJ_BIND_FUNCTION(createPattern, ctx, argc, argv) {
 	if( argc < 1 ) { return NULL; }
+	
+	// As in drawImage: the source canvas's drawing is flushed first, and a
+	// WebGL canvas waits for this copy before drawing again
+	scriptView.currentRenderingContext = renderingContext;
 	NSObject<EJDrawable> *drawable = (NSObject<EJDrawable> *)JSValueGetPrivate(argv[0]);
 	EJTexture *image = drawable.texture;
 	

@@ -4,7 +4,6 @@
 
 @synthesize glContext2D;
 @synthesize glSharegroup;
-@synthesize textureCache;
 
 static EJSharedOpenGLContext *sharedOpenGLContext;
 + (EJSharedOpenGLContext *)instance {
@@ -18,7 +17,6 @@ static EJSharedOpenGLContext *sharedOpenGLContext;
 	if( self = [super init] ) {
 		glContext2D = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
 		glSharegroup = glContext2D.sharegroup;
-		CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, glContext2D, NULL, &textureCache);
 	}
 	return self;
 }
@@ -26,7 +24,6 @@ static EJSharedOpenGLContext *sharedOpenGLContext;
 - (void)dealloc {
 	sharedOpenGLContext = nil;
 	
-	if( textureCache ) { CFRelease(textureCache); }
 	[glContext2D release];
 	
 	[EAGLContext setCurrentContext:nil];

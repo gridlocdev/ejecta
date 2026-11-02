@@ -50,6 +50,17 @@
 	
 	[self resizeAuxiliaryBuffers];
 	
+	// Should OpenGL not render into the shared surface, use a plain texture;
+	// drawing it into a 2D canvas then copies its pixels
+	if( texture.isInterop && glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ) {
+		NSLog(@"Warning: OpenGL can't render into a surface shared with Metal; using a copy instead");
+		[texture release];
+		texture = [[EJTexture alloc] initAsRenderTargetWithWidth:newWidth height:newHeight fbo:viewFrameBuffer];
+		texture.drawFlippedY = true;
+		glBindFramebuffer(GL_FRAMEBUFFER, viewFrameBuffer);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture.textureId, 0);
+	}
+	
 	// Clear
 	glViewport(0, 0, width, height);
 	[self clear];
@@ -64,6 +75,13 @@
 }
 
 - (EJTexture *)texture {
+	// Usually called with a 2D canvas current, whose OpenGL context is the
+	// shared one; resolving and flushing need this canvas's own context
+	EAGLContext *previousContext = EAGLContext.currentContext;
+	if( previousContext != glContext ) {
+		[EAGLContext setCurrentContext:glContext];
+	}
+	
 	// If this texture Canvas uses MSAA, we need to resolve the MSAA first,
 	// before we can use the texture for drawing.
 	if( msaaEnabled && needsPresenting ) {
@@ -79,9 +97,11 @@
 		needsPresenting = NO;
 	}
 	
-	// Submit what was drawn, so Metal sees it when it reads the surface
-	if( EAGLContext.currentContext == glContext ) {
-		glFlush();
+	// Submit what was drawn, so Metal (or another context) sees it
+	glFlush();
+	
+	if( previousContext != glContext ) {
+		[EAGLContext setCurrentContext:previousContext];
 	}
 	return texture;
 }
