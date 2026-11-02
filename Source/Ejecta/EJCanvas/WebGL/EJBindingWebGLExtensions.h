@@ -8,13 +8,20 @@
 #import "EJBindingBase.h"
 #import "EJBindingWebGLObjects.h"
 
+#define EJ_WEBGL_1 1
+#define EJ_WEBGL_2 2
+
 typedef struct {
 	const char *exposedName;
-	const char *internalName;
+	const char *internalName; // NULL when core in OpenGL ES 3
+	int versions; // EJ_WEBGL_1 and/or EJ_WEBGL_2
 } EJWebGLExtensionName;
 
 extern const EJWebGLExtensionName EJWebGLExtensions[];
 extern const int EJWebGLExtensionsCount;
+
+// Whether the extension is offered to a WebGL context of this version
+BOOL EJWebGLExtensionIsAvailable(const EJWebGLExtensionName *extension, int webglVersion);
 
 
 @interface EJBindingWebGLExtension : EJBindingBase {
@@ -49,6 +56,9 @@ extern const int EJWebGLExtensionsCount;
 @end;
 
 @interface EJBindingWebGLExtensionANGLE_instanced_arrays : EJBindingWebGLExtension
+@end;
+
+@interface EJBindingWebGLExtensionEXT_color_buffer_half_float : EJBindingWebGLExtension
 @end;
 
 @interface EJBindingWebGLExtensionOES_element_index_uint : EJBindingWebGLExtension

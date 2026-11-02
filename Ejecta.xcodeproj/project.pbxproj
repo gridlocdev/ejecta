@@ -161,6 +161,8 @@
 		B6F714CC1BCF126A0082A90F /* EJBindingWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = B63D256C16E8DFAB007E6034 /* EJBindingWebSocket.m */; };
 		B6F714CD1BCF126A0082A90F /* EJBindingCanvasStyle.m in Sources */ = {isa = PBXBuildFile; fileRef = B6F629D016F353C700F16BAC /* EJBindingCanvasStyle.m */; };
 		B6F714CE1BCF126A0082A90F /* EJBindingWebGLExtensions.m in Sources */ = {isa = PBXBuildFile; fileRef = B870BDE816F2E11A00827F01 /* EJBindingWebGLExtensions.m */; };
+		F522DE3B06F74183B6B989EE /* EJBindingCanvasContextWebGL2.m in Sources */ = {isa = PBXBuildFile; fileRef = 0DAFB2BC120247849FFE1A11 /* EJBindingCanvasContextWebGL2.m */; };
+		DDBA65366D8245559DB441CF /* EJBindingCanvasContextWebGL2.m in Sources */ = {isa = PBXBuildFile; fileRef = 0DAFB2BC120247849FFE1A11 /* EJBindingCanvasContextWebGL2.m */; };
 		B6F714CF1BCF126A0082A90F /* EJBindingIAPManager.m in Sources */ = {isa = PBXBuildFile; fileRef = B6D6E09F16F7E7B4009AB75F /* EJBindingIAPManager.m */; };
 		B6F714D01BCF126A0082A90F /* EJBindingIAPTransaction.m in Sources */ = {isa = PBXBuildFile; fileRef = B6D6E0A216F7E7D8009AB75F /* EJBindingIAPTransaction.m */; };
 		B6F714D11BCF126A0082A90F /* EJBindingIAPProduct.m in Sources */ = {isa = PBXBuildFile; fileRef = B6D6E0A516F7E81B009AB75F /* EJBindingIAPProduct.m */; };
@@ -368,6 +370,8 @@
 		B6F9AFBE169F81D400ABD91A /* EJBindingWindowEvents.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJBindingWindowEvents.h; sourceTree = "<group>"; };
 		B6F9AFBF169F81D400ABD91A /* EJBindingWindowEvents.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJBindingWindowEvents.m; sourceTree = "<group>"; };
 		B870BDE716F2E10400827F01 /* EJBindingWebGLExtensions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EJBindingWebGLExtensions.h; path = WebGL/EJBindingWebGLExtensions.h; sourceTree = "<group>"; };
+		44DF0C54CC1444F6A176486E /* EJBindingCanvasContextWebGL2.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = EJBindingCanvasContextWebGL2.h; path = WebGL/EJBindingCanvasContextWebGL2.h; sourceTree = "<group>"; };
+		0DAFB2BC120247849FFE1A11 /* EJBindingCanvasContextWebGL2.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EJBindingCanvasContextWebGL2.m; path = WebGL/EJBindingCanvasContextWebGL2.m; sourceTree = "<group>"; };
 		B870BDE816F2E11A00827F01 /* EJBindingWebGLExtensions.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = EJBindingWebGLExtensions.m; path = WebGL/EJBindingWebGLExtensions.m; sourceTree = "<group>"; };
 		EA1D10000000000000000001 /* EJAudioMixerCore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioMixerCore.h; sourceTree = "<group>"; };
 		EA1D10000000000000000002 /* EJAudioMixerCore.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioMixerCore.c; sourceTree = "<group>"; };
@@ -741,6 +745,8 @@
 				B66847581823FEDF00ABCDF9 /* EJCanvasContextWebGLTexture.m */,
 				B6F11554167BD599001F1324 /* EJBindingWebGLObjects.h */,
 				B6F11555167BD59B001F1324 /* EJBindingWebGLObjects.m */,
+				44DF0C54CC1444F6A176486E /* EJBindingCanvasContextWebGL2.h */,
+				0DAFB2BC120247849FFE1A11 /* EJBindingCanvasContextWebGL2.m */,
 				B870BDE716F2E10400827F01 /* EJBindingWebGLExtensions.h */,
 				B870BDE816F2E11A00827F01 /* EJBindingWebGLExtensions.m */,
 				B68036FF1682A58200833604 /* EJConvertWebGL.h */,
@@ -918,6 +924,7 @@
 				B63D256D16E8E0EE007E6034 /* EJBindingWebSocket.m in Sources */,
 				B6F629D116F353C800F16BAC /* EJBindingCanvasStyle.m in Sources */,
 				B870BDE916F2E11A00827F01 /* EJBindingWebGLExtensions.m in Sources */,
+				F522DE3B06F74183B6B989EE /* EJBindingCanvasContextWebGL2.m in Sources */,
 				B6B41F9A1BF25A4B0075C00F /* EJBindingGamepad.m in Sources */,
 				B6D6E0A016F7E7B4009AB75F /* EJBindingIAPManager.m in Sources */,
 				B6D6E0A316F7E7D8009AB75F /* EJBindingIAPTransaction.m in Sources */,
@@ -993,6 +1000,7 @@
 				B6F714CC1BCF126A0082A90F /* EJBindingWebSocket.m in Sources */,
 				B6F714CD1BCF126A0082A90F /* EJBindingCanvasStyle.m in Sources */,
 				B6F714CE1BCF126A0082A90F /* EJBindingWebGLExtensions.m in Sources */,
+				DDBA65366D8245559DB441CF /* EJBindingCanvasContextWebGL2.m in Sources */,
 				B6B41F9B1BF25A4B0075C00F /* EJBindingGamepad.m in Sources */,
 				B6F714CF1BCF126A0082A90F /* EJBindingIAPManager.m in Sources */,
 				B6F714D01BCF126A0082A90F /* EJBindingIAPTransaction.m in Sources */,

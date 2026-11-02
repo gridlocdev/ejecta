@@ -20,11 +20,18 @@
 	[super dealloc];
 }
 
++ (GLint)nullIndex {
+	return 0;
+}
+
 + (GLint)indexFromJSValue:(JSValueRef)value {
 	if( !value ) { return 0; }
 	
+	// null or undefined: OpenGL's "no object"; a WebGL object of another
+	// type: -1, which OpenGL rejects
 	EJBindingWebGLObject *binding = (EJBindingWebGLObject *)JSValueGetPrivate(value);
-	return (binding && [binding isKindOfClass:[self class]]) ? binding->index : -1;
+	if( !binding ) { return [self nullIndex]; }
+	return [binding isKindOfClass:[self class]] ? binding->index : -1;
 }
 
 + (EJBindingWebGLObject *)webGLObjectFromJSValue:(JSValueRef)value {
@@ -112,11 +119,21 @@
 
 
 @implementation EJBindingWebGLUniformLocation
+// A null location is -1, which OpenGL's uniform calls ignore
++ (GLint)nullIndex {
+	return -1;
+}
+
 // nothing to delete
 @end
 
 
 @implementation EJBindingWebGLRenderbuffer
+// null is the canvas's own renderbuffer
++ (GLint)nullIndex {
+	return -1;
+}
+
 - (void)invalidate {
 	[webglContext deleteRenderbuffer:index];
 	[super invalidate];
@@ -125,6 +142,11 @@
 
 
 @implementation EJBindingWebGLFramebuffer
+// null is the canvas's own framebuffer
++ (GLint)nullIndex {
+	return -1;
+}
+
 - (void)invalidate {
 	[webglContext deleteFramebuffer:index];
 	[super invalidate];
@@ -137,6 +159,10 @@
 	[webglContext deleteVertexArray:index];
 	[super invalidate];
 }
+@end
+
+
+@implementation EJBindingWebGLVertexArrayObject
 @end
 
 

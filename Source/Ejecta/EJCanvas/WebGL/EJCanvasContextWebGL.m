@@ -15,7 +15,9 @@
 			glFlush();
 		}
 		
-		glContext = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2
+		// OpenGL ES 3, as the shared context it joins: a context can't join a
+		// sharegroup of another API version. WebGL 1 uses it too.
+		glContext = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3
 			sharegroup:scriptView.openGLContext.glSharegroup];
 		
 		bufferWidth = width = widthp;
@@ -40,17 +42,17 @@
 		glBindFramebuffer(GL_FRAMEBUFFER, msaaFrameBuffer);
 		glBindRenderbuffer(GL_RENDERBUFFER, msaaRenderBuffer);
 		
-		glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, msaaSamples, GL_RGBA8_OES, bufferWidth, bufferHeight);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaaSamples, GL_RGBA8, bufferWidth, bufferHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msaaRenderBuffer);
 	}
 	
 	// Resize the depth and stencil buffer
 	glBindRenderbuffer(GL_RENDERBUFFER, depthStencilBuffer);
 	if( msaaEnabled ) {
-		glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, msaaSamples, GL_DEPTH24_STENCIL8_OES, bufferWidth, bufferHeight);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaaSamples, GL_DEPTH24_STENCIL8, bufferWidth, bufferHeight);
 	}
 	else {
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, bufferWidth, bufferHeight);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, bufferWidth, bufferHeight);
 	}
 	
 	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthStencilBuffer);

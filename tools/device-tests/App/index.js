@@ -141,6 +141,11 @@ function webgl2Tests() {
 	var gl = canvas.getContext('webgl2');
 	if( !gl ) { return skip('webgl2', 'getContext("webgl2") returned null'); }
 	check('webgl2 context', typeof gl.drawArraysInstanced === 'function' && typeof gl.createVertexArray === 'function');
+	check('webgl2 version', /^WebGL 2\.0/.test(gl.getParameter(gl.VERSION)) &&
+		/^WebGL GLSL ES 3\.00/.test(gl.getParameter(gl.SHADING_LANGUAGE_VERSION)),
+		gl.getParameter(gl.VERSION) + ' / ' + gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
+	check('webgl2 has no WebGL 1 extensions that are core', gl.getExtension('OES_vertex_array_object') === null);
+	check('webgl2 canvas has no webgl context', canvas.getContext('webgl') === null);
 
 	try {
 		// GLSL ES 3.00 with fixed attribute locations, instancing and a VAO:
@@ -172,7 +177,10 @@ function webgl2Tests() {
 		gl.enableVertexAttribArray(1);
 		gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
 		gl.vertexAttribDivisor(1, 1);
+		check('webgl2 vertex array binding', gl.getParameter(gl.VERTEX_ARRAY_BINDING) === vao);
 		gl.bindVertexArray(null);
+		check('webgl2 unbinds the vertex array', gl.getParameter(gl.VERTEX_ARRAY_BINDING) === null,
+			gl.getParameter(gl.VERTEX_ARRAY_BINDING));
 
 		gl.clearColor(0, 0, 0, 1);
 		gl.clear(gl.COLOR_BUFFER_BIT);
@@ -185,6 +193,45 @@ function webgl2Tests() {
 			rgba(left) + ' / ' + rgba(right));
 	}
 	catch( e ) { check('webgl2 draw', false, e.message); }
+
+	try {
+		// GLSL ES 3.00 that has no GLSL 1.00 equivalent: unsigned integers,
+		// bit operations, texelFetch and textureSize
+		var program3 = compileProgram(gl,
+			'#version 300 es\n' +
+			'in vec2 p;' +
+			'void main(){ gl_Position = vec4(p, 0, 1); }',
+			'#version 300 es\n' +
+			'precision highp float;' +
+			'uniform sampler2D s;' +
+			'out vec4 o;' +
+			'void main(){' +
+			'  uint bits = 5u & 3u;' +
+			'  ivec2 size = textureSize(s, 0);' +
+			'  vec4 texel = texelFetch(s, ivec2(0), 0);' +
+			'  o = vec4(float(bits), float(size.x) / 6.0, texel.r, 1);' +
+			'}');
+		check('webgl2 links GLSL 3.00 as is', gl.getProgramParameter(program3, gl.LINK_STATUS) === true);
+		gl.bindVertexArray(null);
+		gl.useProgram(program3);
+		var full = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, full);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		var p3 = gl.getAttribLocation(program3, 'p');
+		gl.enableVertexAttribArray(p3);
+		gl.vertexAttribPointer(p3, 2, gl.FLOAT, false, 0, 0);
+		var texture3 = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture3);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 3, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+			new Uint8Array([255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255]));
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		var integers = new Uint8Array(4);
+		gl.readPixels(4, 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, integers);
+		check('webgl2 integers, texelFetch, textureSize', same(rgba(integers), [255, 128, 255, 255]), rgba(integers));
+		gl.disableVertexAttribArray(p3);
+	}
+	catch( e ) { check('webgl2 integers, texelFetch, textureSize', false, e.message); }
 
 	try {
 		// A texture whose sides aren't powers of two, mipmapped as LittleJS

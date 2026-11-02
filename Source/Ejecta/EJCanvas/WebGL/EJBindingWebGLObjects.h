@@ -61,6 +61,10 @@
 @interface EJBindingWebGLVertexArrayObjectOES : EJBindingWebGLObject
 @end
 
+// WebGL 2's name for the same object
+@interface EJBindingWebGLVertexArrayObject : EJBindingWebGLVertexArrayObjectOES
+@end
+
 @interface EJBindingWebGLActiveInfo : EJBindingBase {
 	GLint size;
 	GLenum type;

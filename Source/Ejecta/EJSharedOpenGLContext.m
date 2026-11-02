@@ -15,7 +15,8 @@ static EJSharedOpenGLContext *sharedOpenGLContext;
 
 - (id)init {
 	if( self = [super init] ) {
-		glContext2D = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+		// OpenGL ES 3, so WebGL 2 contexts can share its textures
+		glContext2D = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
 		glSharegroup = glContext2D.sharegroup;
 	}
 	return self;

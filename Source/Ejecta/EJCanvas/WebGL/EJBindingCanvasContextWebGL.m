@@ -54,7 +54,7 @@
 	for( NSValue *v in extensions.allValues ) { JSValueUnprotectSafe(scriptView.jsGlobalContext, v.pointerValue); }
 	[extensions release];
     
-	for( NSNumber *n in vertexArrays ) { GLuint array = n.intValue; glDeleteVertexArraysOES(1, &array); }
+	for( NSNumber *n in vertexArrays ) { GLuint array = n.intValue; glDeleteVertexArrays(1, &array); }
 	[vertexArrays release];
 	
 	// Unprotect all texture units
@@ -68,6 +68,10 @@
 	[renderingContext release];
 	
 	[super dealloc];
+}
+
+- (int)webglVersion {
+	return EJ_WEBGL_1;
 }
 
 - (void)deleteBuffer:(GLuint)buffer {
@@ -132,7 +136,7 @@
 	NSNumber *key = @(vertexArray);
 	if( vertexArrays[key] ) {
 		scriptView.currentRenderingContext = renderingContext;
-		glDeleteVertexArraysOES(1, &vertexArray);
+		glDeleteVertexArrays(1, &vertexArray);
 		[vertexArrays removeObjectForKey:key];
 	}
 }
@@ -175,12 +179,10 @@ EJ_BIND_FUNCTION(isContextLost, ctx, argc, argv) {
 EJ_BIND_FUNCTION(getSupportedExtensions, ctx, argc, argv) {
 	scriptView.currentRenderingContext = renderingContext;
 	
-	const char *allExtension = (const char *)glGetString(GL_EXTENSIONS);
-	
 	JSValueRef *args = malloc(EJWebGLExtensionsCount * sizeof(JSObjectRef));
 	int count = 0;
 	for( int i = 0; i < EJWebGLExtensionsCount; i++ ) {
-		if( strstr(allExtension, EJWebGLExtensions[i].internalName) ) {
+		if( EJWebGLExtensionIsAvailable(&EJWebGLExtensions[i], self.webglVersion) ) {
 			args[count++] = NSStringToJSValue(ctx, @(EJWebGLExtensions[i].exposedName));
 		}
 	}
@@ -208,8 +210,7 @@ EJ_BIND_FUNCTION(getExtension, ctx, argc, argv) {
 	for( int i = 0; i < EJWebGLExtensionsCount; i++ ) {
 		
 		if( strcmp(exposedName, EJWebGLExtensions[i].exposedName) == 0 ) {
-			const char *allExtension = (const char *)glGetString(GL_EXTENSIONS);
-			extensionAvialable = (strstr(allExtension, EJWebGLExtensions[i].internalName) != NULL);
+			extensionAvialable = EJWebGLExtensionIsAvailable(&EJWebGLExtensions[i], self.webglVersion);
 			break;
 		}
 	}
@@ -812,7 +813,7 @@ EJ_BIND_FUNCTION(getParameter, ctx, argc, argv) {
 			
 		// Ejecta/WebGL specific
 		case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
-			// device may support more, but we only map 8 here
+			// device may support more, but we only map EJ_CANVAS_MAX_TEXTURE_UNITS here
 			ret = JSValueMakeNumber(ctx, EJ_CANVAS_MAX_TEXTURE_UNITS);
 			break;
 		
@@ -855,7 +856,8 @@ EJ_BIND_FUNCTION(getParameter, ctx, argc, argv) {
 	
 	// That was fun!
 	
-	return ret;
+	// No object bound
+	return ret ? ret : JSValueMakeNull(ctx);
 }
 
 EJ_BIND_FUNCTION(getBufferParameter, ctx, argc, argv) {
@@ -907,6 +909,10 @@ EJ_BIND_FUNCTION(getProgramParameter, ctx, argc, argv) {
 	
 	GLint value;
 	glGetProgramiv(program, pname, &value);
+	
+	if( pname == GL_DELETE_STATUS || pname == GL_LINK_STATUS || pname == GL_VALIDATE_STATUS ) {
+		return JSValueMakeBoolean(ctx, value);
+	}
 	return JSValueMakeNumber(ctx, value);
 }
 
@@ -1333,8 +1339,8 @@ EJ_BIND_FUNCTION(renderbufferStorage, ctx, argc, argv) {
 		targetTexture = activeTexture->cubeMap;
 	}
 	
-	if( internalformat == GL_DEPTH_STENCIL_OES ) {
-		internalformat = GL_DEPTH24_STENCIL8_OES;
+	if( internalformat == GL_DEPTH_STENCIL ) {
+		internalformat = GL_DEPTH24_STENCIL8;
 	}
 	
 	[targetTexture ensureMutableKeepPixels:NO forTarget:target];
@@ -1462,7 +1468,8 @@ EJ_BIND_FUNCTION(texImage2D, ctx, argc, argv) {
 			[targetTexture ensureMutableKeepPixels:NO forTarget:bindTarget];
 			[targetTexture bindToTarget:bindTarget];
 			void *nulled = calloc(width * height, EJGetBytesPerPixel(type, format));
-			glTexImage2D(target, level, format, width, height, 0, format, type, nulled);
+			GLenum internal = EJWebGL1InternalFormat(format, &type);
+			glTexImage2D(target, level, internal, width, height, 0, format, type, nulled);
 			free(nulled);
 		}
 		else if( JSValueIsObject(ctx, argv[8]) ) {
@@ -1486,7 +1493,8 @@ EJ_BIND_FUNCTION(texImage2D, ctx, argc, argv) {
 					
 					[targetTexture ensureMutableKeepPixels:keepPixels forTarget:bindTarget];
 					[targetTexture bindToTarget:bindTarget];
-					glTexImage2D(target, level, format, width, height, 0, format, type, pixels);
+					GLenum internal = EJWebGL1InternalFormat(format, &type);
+					glTexImage2D(target, level, internal, width, height, 0, format, type, pixels);
 				}
 			}
 		}
@@ -1594,6 +1602,7 @@ EJ_BIND_FUNCTION(texSubImage2D, ctx, argc, argv) {
 			[targetTexture ensureMutableKeepPixels:YES forTarget:bindTarget];
 			[targetTexture bindToTarget:bindTarget];
 			void *nulled = calloc(width * height, EJGetBytesPerPixel(type, format));
+			EJWebGL1InternalFormat(format, &type);
 			glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, nulled);
 			free(nulled);
 		}
@@ -1617,6 +1626,7 @@ EJ_BIND_FUNCTION(texSubImage2D, ctx, argc, argv) {
 					// a portion of the texture
 					[targetTexture ensureMutableKeepPixels:YES forTarget:bindTarget];
 					[targetTexture bindToTarget:bindTarget];
+					EJWebGL1InternalFormat(format, &type);
 					glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
 				}
 			}
@@ -2196,10 +2206,10 @@ EJ_BIND_CONST_GL(DEPTH_COMPONENT16);
 
 // Not sure if it makes sense to alias STENCIL_INDEX or if it should be
 // removed completely.
-EJ_BIND_CONST(STENCIL_INDEX, GL_DEPTH_STENCIL_OES);
-EJ_BIND_CONST(STENCIL_INDEX8, GL_DEPTH_STENCIL_OES);
+EJ_BIND_CONST(STENCIL_INDEX, GL_DEPTH_STENCIL);
+EJ_BIND_CONST(STENCIL_INDEX8, GL_DEPTH_STENCIL);
 
-EJ_BIND_CONST(DEPTH_STENCIL, GL_DEPTH_STENCIL_OES);
+EJ_BIND_CONST(DEPTH_STENCIL, GL_DEPTH_STENCIL);
 
 EJ_BIND_CONST_GL(RENDERBUFFER_WIDTH);
 EJ_BIND_CONST_GL(RENDERBUFFER_HEIGHT);

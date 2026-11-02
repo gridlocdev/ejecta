@@ -1,19 +1,31 @@
 #import "EJBindingWebGLExtensions.h"
 #import "EJBindingCanvasContextWebGL.h"
+#import "EJConvertWebGL.h"
 
 
+// Extensions with no internal name are core in OpenGL ES 3, which every
+// Ejecta GL context uses, so they are always available
 const EJWebGLExtensionName EJWebGLExtensions[] = {
-	{"EXT_texture_filter_anisotropic", "GL_EXT_texture_filter_anisotropic"},
-	{"OES_texture_float", "GL_OES_texture_float"},
-	{"OES_texture_half_float", "GL_OES_texture_half_float"},
-	{"OES_texture_half_float_linear", "GL_OES_texture_half_float_linear"},
-	{"OES_standard_derivatives", "GL_OES_standard_derivatives"},
-	{"OES_vertex_array_object", "GL_OES_vertex_array_object"},
-	{"ANGLE_instanced_arrays", "EXT_instanced_arrays"},
-	{"OES_element_index_uint", "GL_OES_element_index_uint"}
+	{"EXT_texture_filter_anisotropic", "GL_EXT_texture_filter_anisotropic", EJ_WEBGL_1 | EJ_WEBGL_2},
+	{"EXT_color_buffer_half_float", "GL_EXT_color_buffer_half_float", EJ_WEBGL_1 | EJ_WEBGL_2},
+	{"OES_texture_float", NULL, EJ_WEBGL_1},
+	{"OES_texture_half_float", NULL, EJ_WEBGL_1},
+	{"OES_texture_half_float_linear", NULL, EJ_WEBGL_1},
+	{"OES_standard_derivatives", "GL_OES_standard_derivatives", EJ_WEBGL_1},
+	{"OES_vertex_array_object", NULL, EJ_WEBGL_1},
+	{"ANGLE_instanced_arrays", NULL, EJ_WEBGL_1},
+	{"OES_element_index_uint", NULL, EJ_WEBGL_1}
 };
 
 const int EJWebGLExtensionsCount = sizeof(EJWebGLExtensions) / sizeof(EJWebGLExtensionName);
+
+BOOL EJWebGLExtensionIsAvailable(const EJWebGLExtensionName *extension, int webglVersion) {
+	if( !(extension->versions & webglVersion) ) { return NO; }
+	if( !extension->internalName ) { return YES; }
+	
+	const char *allExtensions = (const char *)glGetString(GL_EXTENSIONS);
+	return allExtensions && strstr(allExtensions, extension->internalName) != NULL;
+}
 
 
 @implementation EJBindingWebGLExtension
@@ -55,7 +67,7 @@ EJ_BIND_CONST_GL(TEXTURE_MAX_ANISOTROPY_EXT);
 
 
 @implementation EJBindingWebGLExtensionOES_texture_half_float
-EJ_BIND_CONST_GL(HALF_FLOAT_OES);
+EJ_BIND_CONST(HALF_FLOAT_OES, GL_HALF_FLOAT_OES);
 @end
 
 
@@ -64,6 +76,15 @@ EJ_BIND_CONST_GL(HALF_FLOAT_OES);
 
 
 @implementation EJBindingWebGLExtensionOES_standard_derivatives
+EJ_BIND_CONST(FRAGMENT_SHADER_DERIVATIVE_HINT_OES, GL_FRAGMENT_SHADER_DERIVATIVE_HINT);
+@end
+
+
+@implementation EJBindingWebGLExtensionEXT_color_buffer_half_float
+EJ_BIND_CONST(RGBA16F_EXT, GL_RGBA16F);
+EJ_BIND_CONST(RGB16F_EXT, GL_RGB16F);
+EJ_BIND_CONST(FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE);
+EJ_BIND_CONST(UNSIGNED_NORMALIZED_EXT, GL_UNSIGNED_NORMALIZED);
 @end
 
 
@@ -72,14 +93,14 @@ EJ_BIND_CONST_GL(HALF_FLOAT_OES);
 EJ_BIND_FUNCTION(createVertexArrayOES, ctx, argc, argv) {
 	GLuint vertexArray;
 	scriptView.currentRenderingContext = webglContext.renderingContext;
-	glGenVertexArraysOES(1, &vertexArray);
+	glGenVertexArrays(1, &vertexArray);
 	JSObjectRef obj = [EJBindingWebGLVertexArrayObjectOES createJSObjectWithContext:ctx
 		scriptView:scriptView webglContext:webglContext index:vertexArray];
 	[webglContext addVertexArray:vertexArray obj:obj];
 	return obj;
 }
 
-EJ_BIND_FUNCTION(deleteVertexArrayOES, ctx, argc, argv) { \
+EJ_BIND_FUNCTION(deleteVertexArrayOES, ctx, argc, argv) {
 	if( argc < 1 ) { return NULL; }
 
 	// Invalidate the object, as the other delete calls do, so it forgets its
@@ -94,7 +115,7 @@ EJ_BIND_FUNCTION(isVertexArrayOES, ctx, argc, argv) {
 
 	scriptView.currentRenderingContext = webglContext.renderingContext;
 	GLuint index = [EJBindingWebGLVertexArrayObjectOES indexFromJSValue:argv[0]];
-	return JSValueMakeBoolean(ctx, glIsVertexArrayOES(index));
+	return JSValueMakeBoolean(ctx, glIsVertexArray(index));
 }
 
 EJ_BIND_FUNCTION(bindVertexArrayOES, ctx, argc, argv) {
@@ -102,11 +123,11 @@ EJ_BIND_FUNCTION(bindVertexArrayOES, ctx, argc, argv) {
 
 	scriptView.currentRenderingContext = webglContext.renderingContext;
 	GLuint index = [EJBindingWebGLVertexArrayObjectOES indexFromJSValue:argv[0]];
-	glBindVertexArrayOES(index);
+	glBindVertexArray(index);
 	return NULL;
 }
 
-EJ_BIND_CONST_GL(VERTEX_ARRAY_BINDING_OES);
+EJ_BIND_CONST(VERTEX_ARRAY_BINDING_OES, GL_VERTEX_ARRAY_BINDING);
 
 @end
 
@@ -116,23 +137,23 @@ EJ_BIND_CONST_GL(VERTEX_ARRAY_BINDING_OES);
 
 EJ_BIND_FUNCTION(drawArraysInstancedANGLE, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLenum mode, GLint first, GLsizei count, GLsizei instanceCount);
-	glDrawArraysInstancedEXT(mode, first, count, instanceCount);
+	glDrawArraysInstanced(mode, first, count, instanceCount);
 	return NULL;
 }
 
 EJ_BIND_FUNCTION(drawElementsInstancedANGLE, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLenum mode, GLsizei count, GLenum type, GLint indices, GLsizei instanceCount);
-	glDrawElementsInstancedEXT(mode, count, type, EJ_BUFFER_OFFSET(indices), instanceCount);
+	glDrawElementsInstanced(mode, count, type, EJ_BUFFER_OFFSET(indices), instanceCount);
 	return NULL;
 }
 
 EJ_BIND_FUNCTION(vertexAttribDivisorANGLE, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLuint index, GLuint divisor);
-	glVertexAttribDivisorEXT(index, divisor);
+	glVertexAttribDivisor(index, divisor);
 	return NULL;
 }
 
-EJ_BIND_CONST(VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE, GL_VERTEX_ATTRIB_ARRAY_DIVISOR_EXT);
+EJ_BIND_CONST(VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE, GL_VERTEX_ATTRIB_ARRAY_DIVISOR);
 
 @end
 

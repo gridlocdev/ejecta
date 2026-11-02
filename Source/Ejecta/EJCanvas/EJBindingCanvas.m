@@ -8,6 +8,7 @@
 #import "EJCanvasContextWebGLScreen.h"
 #import "EJCanvasContextWebGLTexture.h"
 #import "EJBindingCanvasContextWebGL.h"
+#import "EJBindingCanvasContextWebGL2.h"
 
 #import "EJJavaScriptView.h"
 
@@ -161,37 +162,11 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 			: EJCanvasContext2DTexture.class;
 	}
 	else if( [type rangeOfString:@"webgl2"].location != NSNotFound ) {
-		// WebGL 2 is built in Ejecta.js on top of this canvas's WebGL 1
-		// context and its extensions; see __ejectaMakeWebGL2 there.
-		if( jsWebGL2Context ) { return jsWebGL2Context; }
-		
-		JSValueRef webglArgv[2] = {
-			NSStringToJSValue(ctx, @"webgl"),
-			argc > 1 ? argv[1] : JSValueMakeUndefined(ctx)
-		};
-		JSValueRef webgl = [self _func_getContext:ctx argc:2 argv:webglArgv];
-		if( !webgl || !JSValueIsObject(ctx, webgl) ) { return JSValueMakeNull(ctx); }
-		
-		JSStringRef makerName = JSStringCreateWithUTF8CString("__ejectaMakeWebGL2");
-		JSValueRef maker = JSObjectGetProperty(ctx, JSContextGetGlobalObject(ctx), makerName, NULL);
-		JSStringRelease(makerName);
-		if( !JSValueIsObject(ctx, maker) || !JSObjectIsFunction(ctx, (JSObjectRef)maker) ) {
-			return JSValueMakeNull(ctx);
-		}
-		
-		JSValueRef exception = NULL;
-		JSValueRef wrapped = JSObjectCallAsFunction(ctx, (JSObjectRef)maker, NULL, 1, &webgl, &exception);
-		if( exception || !wrapped || !JSValueIsObject(ctx, wrapped) ) {
-			if( exception ) { [scriptView logException:exception ctx:ctx]; }
-			return JSValueMakeNull(ctx);
-		}
-		
-		// The canvas keeps the wrapper alive, as it does its context
-		jsWebGL2Context = (JSObjectRef)wrapped;
-		JSStringRef wrapperName = JSStringCreateWithUTF8CString("__webgl2Context");
-		JSObjectSetProperty(ctx, jsObject, wrapperName, wrapped, kJSPropertyAttributeDontEnum, NULL);
-		JSStringRelease(wrapperName);
-		return wrapped;
+		newContextMode = kEJCanvasContextModeWebGL2;
+		bindingClass = EJBindingCanvasContextWebGL2.class;
+		contextClass = isScreenCanvas
+			? EJCanvasContextWebGLScreen.class
+			: EJCanvasContextWebGLTexture.class;
 	}
 	else if( [type rangeOfString:@"webgl"].location != NSNotFound ) {
 		newContextMode = kEJCanvasContextModeWebGL;
@@ -202,7 +177,7 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 	}
 	else {
 		NSLog(@"Warning: Invalid argument %@ for getContext()", type);
-		return NULL;
+		return JSValueMakeNull(ctx);
 	}
 	
 	
@@ -215,7 +190,7 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 		// New mode is different from current? - we can't do that
 		else {
 			NSLog(@"Warning: CanvasContext already created. Can't change 2d/webgl mode.");
-			return NULL;
+			return JSValueMakeNull(ctx);
 		}
 	}
 	
@@ -248,7 +223,7 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 					maxSamples = EJSharedMetalContext.instance.maxSamples;
 				}
 				else {
-					glGetIntegerv(GL_MAX_SAMPLES_APPLE, &maxSamples);
+					glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
 				}
 			
 				renderingContext.msaaEnabled = maxSamples > 1;

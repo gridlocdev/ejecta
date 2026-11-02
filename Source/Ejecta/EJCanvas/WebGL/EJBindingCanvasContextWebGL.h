@@ -22,7 +22,7 @@
 
 #define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
 
-#define EJ_CANVAS_MAX_TEXTURE_UNITS 8
+#define EJ_CANVAS_MAX_TEXTURE_UNITS 16
 #define EJ_BUFFER_OFFSET(i) ((char *)NULL + (i))
 
 #define EJ_BIND_CONST_GL(NAME) EJ_BIND_CONST(NAME, GL_##NAME)
@@ -71,5 +71,6 @@ typedef struct {
 - (void)deleteVertexArray:(GLuint)vertexArray;
 
 @property (readonly, nonatomic) EJCanvasContextWebGL *renderingContext;
+@property (readonly, nonatomic) int webglVersion; // EJ_WEBGL_1 or EJ_WEBGL_2
 
 @end

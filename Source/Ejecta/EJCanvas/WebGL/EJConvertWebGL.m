@@ -53,6 +53,7 @@ GLuint EJGetBytesPerPixel(GLenum type, GLenum format) {
 			bytesPerComponent = 4;
 			break;
 		case GL_HALF_FLOAT_OES:
+		case GL_HALF_FLOAT:
 			bytesPerComponent = 2;
 			break;
 		case GL_UNSIGNED_SHORT_5_6_5:
@@ -73,4 +74,24 @@ GLuint EJGetBytesPerPixel(GLenum type, GLenum format) {
 			return 4 * bytesPerComponent;
 	}
 	return 0;
+}
+
+GLenum EJWebGL1InternalFormat(GLenum format, GLenum *type) {
+	if( *type == GL_HALF_FLOAT_OES ) {
+		*type = GL_HALF_FLOAT;
+	}
+	
+	if( *type == GL_FLOAT ) {
+		switch( format ) {
+			case GL_RGBA: return GL_RGBA32F;
+			case GL_RGB: return GL_RGB32F;
+		}
+	}
+	else if( *type == GL_HALF_FLOAT ) {
+		switch( format ) {
+			case GL_RGBA: return GL_RGBA16F;
+			case GL_RGB: return GL_RGB16F;
+		}
+	}
+	return format;
 }
