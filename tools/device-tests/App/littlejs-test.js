@@ -11,6 +11,7 @@ function littlejsTest( report ) {
 		function() { drawRect(vec2(0), vec2(6), rgb(1, 0, 0)); }
 	);
 	setTimeout(function() {
+		console.log('INFO littlejs: ' + frame + ' frames, ' + averageFPS.toFixed(1) + ' fps; reading the screen');
 		var screen = window.canvas.getContext('2d');
 		var w = window.canvas.width, h = window.canvas.height;
 		var center = rgba(screen.getImageData(w / 2 | 0, h / 2 | 0, 1, 1).data);

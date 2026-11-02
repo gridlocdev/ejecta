@@ -61,14 +61,22 @@ def main():
                     break
             elif process.poll() is not None:
                 break
-        process.terminate()
-
         if not done:
             print('\nThe tests did not finish: crash or timeout after %d s' % timeout)
-            log = simctl('spawn', udid, 'log', 'show', '--last', '2m', '--style', 'compact',
-                         '--predicate', 'process == "Ejecta-TV"', check=False).stdout
-            print('\nLast log lines:\n' + '\n'.join(log.splitlines()[-60:]))
+            # Simulator apps are processes on the Mac: show where each thread is
+            pids = subprocess.run(['pgrep', '-f', 'Ejecta-TV.app/Ejecta-TV'], capture_output=True, text=True).stdout.split()
+            if pids:
+                sample = subprocess.run(['sample', pids[0], '2'], capture_output=True, text=True).stdout
+                print('\nThread stacks (sample):\n' + '\n'.join(sample.splitlines()[:250]))
+            else:
+                print('The app is not running: it crashed')
+                reports = os.path.expanduser('~/Library/Logs/DiagnosticReports')
+                crashes = sorted([f for f in os.listdir(reports) if 'Ejecta' in f], reverse=True) if os.path.isdir(reports) else []
+                if crashes:
+                    print(open(os.path.join(reports, crashes[0]), errors='replace').read()[:8000])
+            process.terminate()
             return 1
+        process.terminate()
         if failed:
             print('\n%d failed:\n  ' % len(failed) + '\n  '.join(failed))
             return 1
