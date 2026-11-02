@@ -97,7 +97,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 
 - (void)create {
 	if( msaaEnabled && metal.maxSamples < 2 ) {
-		NSLog(@"Warning: This device can't keep multisampled pixels between frames; antialias is off");
+		NSLog(@"Warning: Antialiasing is not available on this device");
 		msaaEnabled = NO;
 	}
 	msaaSamples = MIN(msaaSamples, metal.maxSamples);
@@ -126,9 +126,10 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	
 	[msaaTexture release];
 	msaaTexture = nil;
+	msaaNeedsResolve = NO;
 	if( msaaEnabled ) {
 		msaaTexture = [metal newTextureWithWidth:bufferWidth height:bufferHeight format:EJ_METAL_PIXEL_FORMAT
-			usage:MTLTextureUsageRenderTarget storage:MTLStorageModePrivate sampleCount:msaaSamples];
+			usage:MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead storage:MTLStorageModePrivate sampleCount:msaaSamples];
 	}
 	
 	// Clear to transparent
@@ -163,12 +164,9 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	color.texture = msaaTexture ? msaaTexture : target;
 	color.loadAction = clearColorPending ? MTLLoadActionClear : MTLLoadActionLoad;
 	color.clearColor = MTLClearColorMake(0, 0, 0, 0);
+	color.storeAction = MTLStoreActionStore;
 	if( msaaTexture ) {
-		color.resolveTexture = target;
-		color.storeAction = MTLStoreActionStoreAndMultisampleResolve;
-	}
-	else {
-		color.storeAction = MTLStoreActionStore;
+		msaaNeedsResolve = YES;
 	}
 	
 	if( depthStencilTexture ) {
@@ -202,6 +200,14 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 		[self encoder];
 	}
 	[metal endEncoderIfOwner:self];
+	
+	if( msaaNeedsResolve ) {
+		id<MTLTexture> target = texture.metalTexture;
+		if( target ) {
+			[metal resolveMultisampleTexture:msaaTexture into:target];
+		}
+		msaaNeedsResolve = NO;
+	}
 }
 
 - (void)clearDepth {

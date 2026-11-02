@@ -56,6 +56,22 @@ static NSString * const EJ2DShaderSource = @
 	"	float tt = max(BA + DA, BA - DA);\n"
 	"	float keep = (D >= 0.0 && g.diff.z * tt + g.inner.z > 0.0) ? 1.0 : 0.0;\n"
 	"	return t.sample(s, float2(tt, 0.5)) * in.color * keep;\n"
+	"}\n"
+	"\n"
+	// Averages the samples of a multisampled canvas into its texture
+	"struct FullscreenOut { float4 position [[position]]; };\n"
+	"vertex FullscreenOut ej2d_fullscreen(uint vid [[vertex_id]]) {\n"
+	"	float2 p = float2((vid << 1) & 2, vid & 2);\n"
+	"	FullscreenOut out;\n"
+	"	out.position = float4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+	"	return out;\n"
+	"}\n"
+	"fragment float4 ej2d_resolve(FullscreenOut in [[stage_in]], texture2d_ms<float> t [[texture(0)]]) {\n"
+	"	uint2 p = uint2(in.position.xy);\n"
+	"	float4 c = float4(0.0);\n"
+	"	uint n = t.get_num_samples();\n"
+	"	for( uint i = 0; i < n; i++ ) { c += t.read(p, i); }\n"
+	"	return c / float(n);\n"
 	"}\n";
 
 static NSString * const EJ2DFragmentNames[kEJ2DProgramCount] = {
@@ -127,11 +143,17 @@ static EJSharedMetalContext *sharedMetalContext;
 
 		CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, device, NULL, &textureCache);
 
-		// Keeping multisampled pixels between render passes needs the
-		// StoreAndMultisampleResolve store action, which A9 and newer have
-		maxSamples = 1;
-		if( [device supportsFamily:MTLGPUFamilyApple3] ) {
-			maxSamples = [device supportsTextureSampleCount:4] ? 4 : 2;
+		maxSamples = [device supportsTextureSampleCount:4] ? 4 : ([device supportsTextureSampleCount:2] ? 2 : 1);
+		
+		MTLRenderPipelineDescriptor *rd = [MTLRenderPipelineDescriptor new];
+		rd.vertexFunction = [[library newFunctionWithName:@"ej2d_fullscreen"] autorelease];
+		rd.fragmentFunction = [[library newFunctionWithName:@"ej2d_resolve"] autorelease];
+		rd.colorAttachments[0].pixelFormat = EJ_METAL_PIXEL_FORMAT;
+		resolvePipeline = [device newRenderPipelineStateWithDescriptor:rd error:&error];
+		[rd release];
+		if( !resolvePipeline ) {
+			NSLog(@"Error: Canvas2D antialiasing pipeline: %@", error);
+			maxSamples = 1;
 		}
 		NSLog(@"Canvas2D: Metal on %@, antialiasing %@", device.name,
 			maxSamples > 1 ? [NSString stringWithFormat:@"up to %d samples", maxSamples] : @"not available");
@@ -146,6 +168,7 @@ static EJSharedMetalContext *sharedMetalContext;
 	[arenasInUse release];
 	[freeArenas release];
 	[arena release];
+	[resolvePipeline release];
 	[samplerLinear release];
 	[samplerNearest release];
 	[pipelines release];
@@ -386,6 +409,22 @@ static EJSharedMetalContext *sharedMetalContext;
 	[blit copyFromTexture:texture toTexture:copy];
 	[self endEncoder];
 	return copy;
+}
+
+- (void)resolveMultisampleTexture:(id<MTLTexture>)source into:(id<MTLTexture>)target {
+	// A shader instead of the MultisampleResolve store action, because that
+	// throws the samples away, and keeping them needs a GPU newer than some
+	// Apple TVs (and the simulator) have
+	MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+	pass.colorAttachments[0].texture = target;
+	pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	
+	id<MTLRenderCommandEncoder> resolve = [self renderEncoderWithDescriptor:pass owner:nil];
+	[resolve setRenderPipelineState:resolvePipeline];
+	[resolve setFragmentTexture:source atIndex:0];
+	[resolve drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+	[self endEncoder];
 }
 
 - (NSMutableData *)readPixelsFromTexture:(id<MTLTexture>)texture x:(int)x y:(int)y width:(int)w height:(int)h {

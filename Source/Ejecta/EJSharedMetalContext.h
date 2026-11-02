@@ -76,6 +76,7 @@ static inline void EJ2DDepthStencilSetOps( EJ2DDepthStencil *ds, MTLStencilOpera
 	id<MTLFunction> vertexFunction;
 	id<MTLFunction> fragmentFunctions[kEJ2DProgramCount];
 	MTLVertexDescriptor *vertexDescriptor;
+	id<MTLRenderPipelineState> resolvePipeline;
 
 	NSMutableDictionary *pipelines;
 	NSMutableDictionary *depthStencilStates;
@@ -119,6 +120,7 @@ static inline void EJ2DDepthStencilSetOps( EJ2DDepthStencil *ds, MTLStencilOpera
 - (id<MTLTexture>)newTextureWithWidth:(int)width height:(int)height format:(MTLPixelFormat)format
 	usage:(MTLTextureUsage)usage storage:(MTLStorageMode)storage sampleCount:(int)sampleCount;
 - (id<MTLTexture>)newCopyOfTexture:(id<MTLTexture>)texture;
+- (void)resolveMultisampleTexture:(id<MTLTexture>)source into:(id<MTLTexture>)target;
 
 // Reads pixels back as RGBA (or single bytes for A8 textures). Waits for
 // all drawing so far to finish. The region is clipped to the texture; pixels

@@ -13,7 +13,9 @@
 // into it through a render pass that stays open until another canvas draws,
 // pixels are read back or the frame ends. Clears are done by the next render
 // pass's load action. Clipping and filling concave paths use a depth-stencil
-// texture made the first time either is needed.
+// texture made the first time either is needed. An antialiased canvas draws
+// into a multisampled texture, averaged into its texture whenever that is
+// read or drawn (endRenderPass).
 
 // Path and Font rendering are handled by the EJPath and EJFont classes.
 
@@ -150,6 +152,7 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 	
 	id<MTLRenderCommandEncoder> encoder;
 	BOOL clearColorPending, clearDepthPending, clearStencilPending;
+	BOOL msaaNeedsResolve;
 	EJ2DDepthStencil depthStencil;
 	BOOL colorWrite;
 	EJCompositeOperation blendOperation;
