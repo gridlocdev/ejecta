@@ -77,7 +77,9 @@ These run on any machine, and CI runs them on every push.
 just test-sim       # the device tests, in a fresh simulator; replaces App/
 ```
 
-`just test-sim` builds the app with `tools/device-tests/App` (plus LittleJS and its shim) and runs it in a new Apple TV simulator with `tools/device-tests/run_sim.py`. The tests draw with the real canvas and WebGL code and read the pixels back. They also check audio with effects, Ogg decoding, `fetch()`, and LittleJS rendering on WebGL 2 to the screen. It prints the app's console and exits with an error on any `FAIL` line, a crash, or a timeout. CI runs it on every push.
+`just test-sim` builds the app with `tools/device-tests/App` (plus LittleJS and its shim) and runs it in a new Apple TV simulator with `tools/device-tests/run_sim.py`. The tests draw with the real canvas and WebGL code and read the pixels back: `canvas2d-test.js` covers what the 2D renderer does (paths and fill rules, clipping, gradients, patterns, text, images, compositing, image data, antialiasing, the screen canvas, 2D canvases uploaded into WebGL). They also check audio with effects, Ogg decoding, `fetch()`, and LittleJS rendering on WebGL 2 to the screen. It prints the app's console and exits with an error on any `FAIL` line, a crash, or a timeout; on a hang it prints the app's thread stacks, on a crash its crash report. CI runs it on every push.
+
+The simulator runs Canvas2D's Metal on the Mac's GPU, but WebGL in a software renderer that can't share surfaces with Metal. So an offscreen WebGL canvas drawn into a 2D canvas goes through a pixel copy there (the log says `Could not share a … texture`); on an Apple TV it doesn't.
 
 Add a test there when you change native code; it's the only automated check that runs Apple's frameworks.
 
@@ -132,6 +134,9 @@ GitHub turns Actions off for new forks. If nothing runs, enable them under the r
 | `Source/Ejecta/EJAudio/EJAudioMixerCore.c` | The sample mixer behind Web Audio: voices, effect buses, routing. Plain C |
 | `Source/Ejecta/EJAudio/EJAudioEffects.c` | Filter, delay, wave shaper, compressor and convolver DSP. Plain C |
 | `Source/Ejecta/EJAudio/EJAudioDecodeOgg.c` | Ogg Vorbis decoding with `Source/lib/stb/stb_vorbis.c` |
+| `Source/Ejecta/EJSharedMetalContext.m` | Canvas2D's Metal device, shaders, pipeline states and per-frame command buffer |
+| `Source/Ejecta/EJCanvas/2D/EJCanvasContext2D.m` | Canvas2D drawing: vertex batching, render passes, clipping and image data |
+| `Source/Ejecta/EJCanvas/EJTexture.m` | Images and canvas pixels, as Metal or OpenGL textures, and the surfaces they share |
 | `Source/Ejecta/EJCanvas/2D/EJPathDash.h` | Cuts paths into dashes for `setLineDash()` |
 | `Source/Ejecta/EJAudio/EJBindingAudioMixer.m` | `Ejecta.AudioMixer`: runs the mixer on AVAudioEngine, decodes audio files |
 | `extras/littlejs/` | The LittleJS adapter (`littlejs-ejecta.js`) and example game |
@@ -174,6 +179,27 @@ The simulator picks up new bindings automatically. If JavaScript depends on what
 
 Up to 64 sounds play at once. A `start()` beyond that fires `ended` straight away. Decoding goes through AVAudioFile (WAV, MP3, AAC/M4A, AIFF, CAF, FLAC) and stb_vorbis (Ogg Vorbis). Audio stops while the app is in the background and picks up when it returns.
 
+### How Canvas2D draws (Metal)
+
+Canvas2D draws with Metal; WebGL still uses OpenGL ES, which Apple has deprecated.
+
+- **Batching.** Every 2D call pushes vertices (position, texture coordinate, color) into a buffer. The buffer is drawn in one call when something changes that a draw call can't mix: the texture, the shader, the blend mode, the stencil settings, or another canvas starting to draw. Thousands of sprites from one image are one draw call.
+- **Render passes.** Each canvas draws into its own Metal texture (BGRA, top row first). A render pass into it stays open until another canvas draws, pixels are read back, or the frame ends. Clearing is the next pass's load action. All canvases share one command buffer per frame, so a canvas drawn into another shows everything drawn into it before.
+- **The screen canvas** copies its texture into a `CAMetalLayer` drawable to present. The pixels stay between frames, as the 2D canvas spec wants.
+- **Clipping and paths** work as they did with OpenGL. `clip()` writes depth values where the path is, and drawing then passes only where the depth matches. Concave paths are filled in two steps: their triangles mark the stencil buffer (non-zero counts front faces up and back faces down, even-odd inverts), then a rectangle fills where the stencil is set. Transparent strokes use the stencil so that overlapping segments blend once.
+- **Shaders** are Metal source in `EJSharedMetalContext.m`, compiled when the app starts. That way building doesn't need Xcode's separately downloaded Metal toolchain.
+- **Antialiasing** (`getContext('2d', {antialias: true})`) needs A9 or newer. On older GPUs, and in the simulator, it is turned off.
+
+Textures cross between the two APIs as follows:
+
+| Drawn by | Used by | How |
+|---|---|---|
+| Image, ImageData, 2D canvas | Canvas2D | Metal texture |
+| Image | WebGL | OpenGL copy made from its pixels (from the file for local images), once |
+| 2D canvas | WebGL `texImage2D` | Pixels read back from Metal; a snapshot, as in browsers |
+| Offscreen WebGL canvas | Canvas2D `drawImage` | An IOSurface that OpenGL renders into and Metal reads, no copy. OpenGL work is flushed before Metal reads it, and WebGL waits for Metal's reads before drawing into it again |
+| Screen WebGL canvas | Canvas2D `drawImage` | Pixels read back with `glReadPixels` |
+
 ### How WebGL 2 works here
 
 Ejecta's native WebGL is WebGL 1 on OpenGL ES 2, which can't share textures with an OpenGL ES 3 context. `getContext('webgl2')` therefore returns the canvas's WebGL 1 context wrapped by `__ejectaMakeWebGL2` in `Ejecta.js`:
@@ -189,7 +215,7 @@ Ejecta's native WebGL is WebGL 1 on OpenGL ES 2, which can't share textures with
 - **Samplers** are accepted, but a texture keeps its own parameters.
 - **Version strings**: `getParameter(VERSION)` says WebGL 2.0.
 
-Anything else in WebGL 2 is missing, and `just check` lists it if a game uses it. A native OpenGL ES 3 path would need every Ejecta context, 2D included, moved to ES 3.
+Anything else in WebGL 2 is missing, and `just check` lists it if a game uses it. A native OpenGL ES 3 path would need all WebGL contexts and the shared resource context moved to ES 3 together; Canvas2D no longer uses OpenGL, so it isn't in the way.
 
 ## Troubleshooting
 

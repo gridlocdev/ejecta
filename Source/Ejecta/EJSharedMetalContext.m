@@ -133,6 +133,8 @@ static EJSharedMetalContext *sharedMetalContext;
 		if( [device supportsFamily:MTLGPUFamilyApple3] ) {
 			maxSamples = [device supportsTextureSampleCount:4] ? 4 : 2;
 		}
+		NSLog(@"Canvas2D: Metal on %@, antialiasing %@", device.name,
+			maxSamples > 1 ? [NSString stringWithFormat:@"up to %d samples", maxSamples] : @"not available");
 	}
 	return self;
 }
