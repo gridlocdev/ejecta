@@ -42,18 +42,22 @@ def main():
 
         # OS_ACTIVITY_DT_MODE makes NSLog write to the console we read
         env = dict(os.environ, SIMCTL_CHILD_OS_ACTIVITY_DT_MODE='YES')
-        process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
-                                    udid, bundle_id], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, env=env, bufsize=1)
-        # A reader thread, as select() on the pipe misses lines already in
-        # Python's buffer once the app goes quiet
-        lines = queue.Queue()
-        def read():
-            for line in process.stdout:
-                lines.put(line)
-            lines.put(None)  # the app exited
-        threading.Thread(target=read, daemon=True).start()
-        failed, done = [], False
+        def launch():
+            process = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', '--terminate-running-process',
+                                        udid, bundle_id], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, env=env, bufsize=1)
+            # A reader thread, as select() on the pipe misses lines already in
+            # Python's buffer once the app goes quiet
+            lines = queue.Queue()
+            def read():
+                for line in process.stdout:
+                    lines.put(line)
+                lines.put(None)  # the app exited
+            threading.Thread(target=read, daemon=True).start()
+            return process, lines
+        process, lines = launch()
+        launches = 1
+        failed, done, started = [], False, False
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -61,8 +65,18 @@ def main():
             except queue.Empty:
                 continue
             if line is None:
+                # Right after install, SpringBoard sometimes doesn't know the
+                # app yet and the launch fails at once; try again
+                if not started and launches < 4:
+                    print('Launch failed, retrying', flush=True)
+                    time.sleep(5)
+                    process, lines = launch()
+                    launches += 1
+                    continue
                 break
             print(line.rstrip(), flush=True)
+            if 'JS LOG' in line:
+                started = True
             if 'FAIL ' in line:
                 failed.append(line.strip())
             if 'DONE' in line:
