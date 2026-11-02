@@ -82,8 +82,10 @@ EJ_BIND_FUNCTION(createVertexArrayOES, ctx, argc, argv) {
 EJ_BIND_FUNCTION(deleteVertexArrayOES, ctx, argc, argv) { \
 	if( argc < 1 ) { return NULL; }
 
-	GLuint index = [EJBindingWebGLVertexArrayObjectOES indexFromJSValue:argv[0]];
-	[webglContext deleteVertexArray:index];
+	// Invalidate the object, as the other delete calls do, so it forgets its
+	// index: GL reuses it for the next vertex array, which this object's
+	// finalizer would otherwise delete
+	[[EJBindingWebGLVertexArrayObjectOES webGLObjectFromJSValue:argv[0]] invalidate];
 	return NULL;
 }
 
