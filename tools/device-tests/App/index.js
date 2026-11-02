@@ -11,6 +11,11 @@ function skip( name, why ) { console.log('SKIP ' + name + ' -- ' + why); }
 function wait( ms ) { return new Promise(function( r ) { setTimeout(r, ms); }); }
 function near( a, b, tolerance ) { return Math.abs(a - b) <= (tolerance || 2); }
 function rgba( data, i ) { i = (i || 0) * 4; return [data[i], data[i+1], data[i+2], data[i+3]]; }
+// Exactly the same values, as many of them
+function equal( a, b ) {
+	a = Array.from(a || []);
+	return a.length === b.length && a.every(function( v, i ) { return v === b[i]; });
+}
 function same( a, b, tolerance ) {
 	for( var i = 0; i < 4; i++ ) { if( !near(a[i], b[i], tolerance) ) { return false; } }
 	return true;
@@ -59,7 +64,7 @@ function canvasTests() {
 	check('2d getLineDash', ctx.getLineDash().join() === '4,4', ctx.getLineDash());
 }
 
-function compileProgram( gl, vs, fs ) {
+function compileProgram( gl, vs, fs, beforeLink ) {
 	var program = gl.createProgram();
 	[[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]].forEach(function( s ) {
 		var shader = gl.createShader(s[0]);
@@ -70,6 +75,7 @@ function compileProgram( gl, vs, fs ) {
 		}
 		gl.attachShader(program, shader);
 	});
+	if( beforeLink ) { beforeLink(program); }
 	gl.linkProgram(program);
 	if( !gl.getProgramParameter(program, gl.LINK_STATUS) ) {
 		throw new Error('link: ' + gl.getProgramInfoLog(program));
@@ -610,6 +616,243 @@ function webgl2FramebufferTests() {
 	});
 }
 
+var VS300 = '#version 300 es\nin vec2 p; void main(){ gl_Position = vec4(p, 0, 1); }';
+var FS300 = '#version 300 es\nprecision highp float; layout(location=0) out vec4 o;';
+
+function fullscreenTriangle( gl, program ) {
+	var buffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+	var at = gl.getAttribLocation(program, 'p');
+	gl.enableVertexAttribArray(at);
+	gl.vertexAttribPointer(at, 2, gl.FLOAT, false, 0, 0);
+	return function() {
+		gl.disableVertexAttribArray(at);
+		gl.deleteBuffer(buffer);
+	};
+}
+
+function centerPixel( gl ) {
+	var pixel = new Uint8Array(4);
+	gl.readPixels(4, 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+	return rgba(pixel);
+}
+
+function webgl2UniformBufferTests() {
+	var canvas = document.createElement('canvas');
+	canvas.width = canvas.height = 8;
+	var gl = canvas.getContext('webgl2');
+	if( !gl ) { return skip('webgl2 uniforms', 'getContext("webgl2") returned null'); }
+
+	function test( name, fn ) {
+		try { fn(); }
+		catch( e ) { check(name, false, e.message); }
+	}
+
+	test('webgl2 uniform types', function() {
+		var program = compileProgram(gl, VS300, FS300 +
+			'uniform uint u; uniform uvec2 u2; uniform ivec3 i3; uniform mat2x3 m; uniform vec4 v[2];' +
+			'uniform sampler2D s;' +
+			'void main(){ o = vec4(float(u) / 255., float(u2.y) / 255., float(i3.z) / 255., 1)' +
+			' + vec4(m[1][2] + v[1].x) * 0. + texture(s, vec2(0)) * 0.; }');
+		gl.useProgram(program);
+		var loc = function( name ) { return gl.getUniformLocation(program, name); };
+		gl.uniform1ui(loc('u'), 51);
+		gl.uniform2uiv(loc('u2'), new Uint32Array([9, 9, 1, 102]), 2);
+		gl.uniform3iv(loc('i3'), [1, 2, 153]);
+		gl.uniformMatrix2x3fv(loc('m'), false, [1, 2, 3, 4, 5, 6]);
+		gl.uniform4fv(loc('v'), new Float32Array([0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]), 4, 8);
+		gl.uniform1i(loc('s'), 3);
+		check('webgl2 uniform1ui and uniform2uiv srcOffset', gl.getUniform(program, loc('u')) === 51 &&
+			equal(gl.getUniform(program, loc('u2')), [1, 102]),
+			gl.getUniform(program, loc('u')) + ' ' + gl.getUniform(program, loc('u2')));
+		var i3 = gl.getUniform(program, loc('i3'));
+		check('webgl2 getUniform ivec3 is an Int32Array', i3 instanceof Int32Array && equal(i3, [1, 2, 153]), i3);
+		var m = gl.getUniform(program, loc('m'));
+		check('webgl2 uniformMatrix2x3fv', m && m.length === 6 && m[5] === 6, m && Array.from(m));
+		var v1 = gl.getUniform(program, loc('v[1]'));
+		check('webgl2 uniform4fv srcOffset and srcLength', v1 && equal(v1, [5, 6, 7, 8]), v1 && Array.from(v1));
+		check('webgl2 getUniform sampler', gl.getUniform(program, loc('s')) === 3, gl.getUniform(program, loc('s')));
+		gl.uniform1i(loc('s'), 0);
+		var done = fullscreenTriangle(gl, program);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		var pixel = centerPixel(gl);
+		check('webgl2 uint and int uniforms in a shader', same(pixel, [51, 102, 153, 255]), pixel);
+		done();
+		gl.deleteProgram(program);
+	});
+
+	test('webgl2 integer attributes', function() {
+		var program = compileProgram(gl,
+			'#version 300 es\nin ivec2 p; in uvec4 c; flat out uvec4 vc;' +
+			'void main(){ vc = c; gl_Position = vec4(vec2(p), 0, 1); }',
+			FS300 + 'flat in uvec4 vc; void main(){ o = vec4(vc) / 255.; }');
+		gl.useProgram(program);
+		var buffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Int32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		var p = gl.getAttribLocation(program, 'p');
+		var c = gl.getAttribLocation(program, 'c');
+		gl.enableVertexAttribArray(p);
+		gl.vertexAttribIPointer(p, 2, gl.INT, 0, 0);
+		gl.vertexAttribI4ui(c, 255, 0, 255, 255);
+		check('webgl2 VERTEX_ATTRIB_ARRAY_INTEGER', gl.getVertexAttrib(p, gl.VERTEX_ATTRIB_ARRAY_INTEGER) === true &&
+			gl.getVertexAttrib(p, gl.VERTEX_ATTRIB_ARRAY_ENABLED) === true);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		var pixel = centerPixel(gl);
+		check('webgl2 vertexAttribIPointer and vertexAttribI4ui', same(pixel, [255, 0, 255, 255]), pixel);
+		gl.disableVertexAttribArray(p);
+		gl.deleteBuffer(buffer);
+		gl.deleteProgram(program);
+
+		gl.vertexAttrib4f(5, 0.5, 1, 2, 3);
+		var current = gl.getVertexAttrib(5, gl.CURRENT_VERTEX_ATTRIB);
+		check('webgl2 CURRENT_VERTEX_ATTRIB', current instanceof Float32Array && equal(current, [0.5, 1, 2, 3]),
+			current && Array.from(current));
+	});
+
+	test('webgl2 uniform blocks', function() {
+		var program = compileProgram(gl, VS300, FS300 +
+			'uniform Colors { vec4 tint; vec4 color; }; void main(){ o = color + tint * 0.; }');
+		gl.useProgram(program);
+		var block = gl.getUniformBlockIndex(program, 'Colors');
+		gl.uniformBlockBinding(program, block, 1);
+		var ubo = gl.createBuffer();
+		gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+		gl.bufferData(gl.UNIFORM_BUFFER, new Float32Array([0, 0, 0, 0, 0, 1, 0, 1]), gl.DYNAMIC_DRAW);
+		gl.bindBufferRange(gl.UNIFORM_BUFFER, 1, ubo, 0, 32);
+		var done = fullscreenTriangle(gl, program);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		var pixel = centerPixel(gl);
+		check('webgl2 uniform buffer', same(pixel, [0, 255, 0, 255]), pixel);
+		done();
+
+		check('webgl2 getUniformBlockIndex', block === 0 && gl.getUniformBlockIndex(program, 'Nope') === gl.INVALID_INDEX, block);
+		check('webgl2 getActiveUniformBlockName', gl.getActiveUniformBlockName(program, block) === 'Colors');
+		check('webgl2 UNIFORM_BLOCK_DATA_SIZE', gl.getActiveUniformBlockParameter(program, block, gl.UNIFORM_BLOCK_DATA_SIZE) >= 32);
+		check('webgl2 UNIFORM_BLOCK_BINDING', gl.getActiveUniformBlockParameter(program, block, gl.UNIFORM_BLOCK_BINDING) === 1);
+		var members = gl.getActiveUniformBlockParameter(program, block, gl.UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES);
+		check('webgl2 UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES', members instanceof Uint32Array && members.length === 2, members);
+		check('webgl2 UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER',
+			gl.getActiveUniformBlockParameter(program, block, gl.UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER) === true);
+		var indices = gl.getUniformIndices(program, ['color', 'nope']);
+		check('webgl2 getUniformIndices', indices.length === 2 && indices[1] === gl.INVALID_INDEX, indices);
+		var offsets = gl.getActiveUniforms(program, [indices[0]], gl.UNIFORM_OFFSET);
+		check('webgl2 getActiveUniforms UNIFORM_OFFSET', offsets.length === 1 && offsets[0] === 16, offsets);
+		var rowMajor = gl.getActiveUniforms(program, [indices[0]], gl.UNIFORM_IS_ROW_MAJOR);
+		check('webgl2 getActiveUniforms UNIFORM_IS_ROW_MAJOR', rowMajor[0] === false, rowMajor);
+		check('webgl2 getIndexedParameter', gl.getIndexedParameter(gl.UNIFORM_BUFFER_BINDING, 1) === ubo &&
+			gl.getIndexedParameter(gl.UNIFORM_BUFFER_SIZE, 1) === 32);
+		check('webgl2 UNIFORM_BUFFER_OFFSET_ALIGNMENT', gl.getParameter(gl.UNIFORM_BUFFER_OFFSET_ALIGNMENT) > 0);
+		gl.deleteBuffer(ubo);
+		gl.deleteProgram(program);
+	});
+
+	test('webgl2 buffers', function() {
+		var a = gl.createBuffer();
+		gl.bindBuffer(gl.COPY_READ_BUFFER, a);
+		gl.bufferData(gl.COPY_READ_BUFFER, new Float32Array([9, 1, 2, 3, 4, 9]), gl.STATIC_DRAW, 1, 4);
+		check('webgl2 bufferData srcOffset and length', gl.getBufferParameter(gl.COPY_READ_BUFFER, gl.BUFFER_SIZE) === 16);
+		gl.bufferSubData(gl.COPY_READ_BUFFER, 4, new Float32Array([7, 8, 9]), 1, 1);
+		var b = gl.createBuffer();
+		gl.bindBuffer(gl.COPY_WRITE_BUFFER, b);
+		gl.bufferData(gl.COPY_WRITE_BUFFER, 16, gl.STATIC_READ);
+		gl.copyBufferSubData(gl.COPY_READ_BUFFER, gl.COPY_WRITE_BUFFER, 0, 0, 16);
+		var out = new Float32Array(6);
+		gl.getBufferSubData(gl.COPY_WRITE_BUFFER, 0, out, 1, 4);
+		check('webgl2 bufferSubData, copyBufferSubData, getBufferSubData', equal(out, [0, 1, 8, 3, 4, 0]), Array.from(out));
+		check('webgl2 COPY_READ_BUFFER_BINDING', gl.getParameter(gl.COPY_READ_BUFFER_BINDING) === a);
+		gl.deleteBuffer(a);
+		gl.deleteBuffer(b);
+
+		var program = compileProgram(gl, VS300, FS300 + 'void main(){ o = vec4(1, 1, 0, 1); }');
+		gl.useProgram(program);
+		var done = fullscreenTriangle(gl, program);
+		var elements = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, elements);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2]), gl.STATIC_DRAW);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+		gl.drawRangeElements(gl.TRIANGLES, 0, 2, 3, gl.UNSIGNED_SHORT, 0);
+		var pixel = centerPixel(gl);
+		check('webgl2 drawRangeElements', same(pixel, [255, 255, 0, 255]), pixel);
+		gl.deleteBuffer(elements);
+		done();
+		gl.deleteProgram(program);
+	});
+
+	test('webgl2 queries and sync', function() {
+		var program = compileProgram(gl, VS300, FS300 + 'void main(){ o = vec4(1); }');
+		gl.useProgram(program);
+		var done = fullscreenTriangle(gl, program);
+		var query = gl.createQuery();
+		gl.beginQuery(gl.ANY_SAMPLES_PASSED, query);
+		check('webgl2 getQuery CURRENT_QUERY', gl.getQuery(gl.ANY_SAMPLES_PASSED, gl.CURRENT_QUERY) === query);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		gl.endQuery(gl.ANY_SAMPLES_PASSED);
+		check('webgl2 isQuery', gl.isQuery(query) === true);
+		var sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+		gl.finish();
+		var waited = gl.clientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0);
+		check('webgl2 fenceSync and clientWaitSync', gl.isSync(sync) &&
+			(waited === gl.ALREADY_SIGNALED || waited === gl.CONDITION_SATISFIED) &&
+			gl.getSyncParameter(sync, gl.SYNC_STATUS) === gl.SIGNALED, waited);
+		gl.deleteSync(sync);
+		check('webgl2 deleteSync', gl.isSync(sync) === false);
+		check('webgl2 query result', gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) === true &&
+			gl.getQueryParameter(query, gl.QUERY_RESULT) === 1, gl.getQueryParameter(query, gl.QUERY_RESULT));
+		gl.deleteQuery(query);
+		check('webgl2 deleteQuery', gl.isQuery(query) === false);
+		done();
+		gl.deleteProgram(program);
+	});
+
+	test('webgl2 transform feedback', function() {
+		var program = compileProgram(gl,
+			'#version 300 es\nout float doubled; void main(){ doubled = float(gl_VertexID) * 2.; gl_Position = vec4(0); gl_PointSize = 1.; }',
+			FS300 + 'void main(){ o = vec4(1); }',
+			function( program ) { gl.transformFeedbackVaryings(program, ['doubled'], gl.SEPARATE_ATTRIBS); });
+		var varying = gl.getTransformFeedbackVarying(program, 0);
+		check('webgl2 getTransformFeedbackVarying', varying && varying.name === 'doubled' && varying.type === gl.FLOAT,
+			varying && varying.name);
+		gl.useProgram(program);
+		var output = gl.createBuffer();
+		gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, output);
+		gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 12, gl.STREAM_READ);
+		gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, null);
+		var feedback = gl.createTransformFeedback();
+		gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback);
+		gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output);
+		check('webgl2 TRANSFORM_FEEDBACK_BINDING', gl.getParameter(gl.TRANSFORM_FEEDBACK_BINDING) === feedback);
+		gl.enable(gl.RASTERIZER_DISCARD);
+		gl.beginTransformFeedback(gl.POINTS);
+		check('webgl2 TRANSFORM_FEEDBACK_ACTIVE', gl.getParameter(gl.TRANSFORM_FEEDBACK_ACTIVE) === true);
+		gl.drawArrays(gl.POINTS, 0, 3);
+		gl.endTransformFeedback();
+		gl.disable(gl.RASTERIZER_DISCARD);
+		gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+		gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+		gl.bindBuffer(gl.COPY_READ_BUFFER, output);
+		var values = new Float32Array(3);
+		gl.getBufferSubData(gl.COPY_READ_BUFFER, 0, values);
+		check('webgl2 transform feedback writes the varyings', equal(values, [0, 2, 4]), Array.from(values));
+		gl.deleteTransformFeedback(feedback);
+		check('webgl2 deleteTransformFeedback', gl.isTransformFeedback(feedback) === false);
+		gl.deleteBuffer(output);
+		gl.deleteProgram(program);
+	});
+
+	test('webgl2 drawArraysInstanced', function() {
+		var program = compileProgram(gl, VS300, FS300 + 'void main(){ o = vec4(0, 0, 1, 1); }');
+		gl.useProgram(program);
+		var done = fullscreenTriangle(gl, program);
+		gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, 2);
+		var pixel = centerPixel(gl);
+		check('webgl2 drawArraysInstanced', same(pixel, [0, 0, 255, 255]), pixel);
+		done();
+		gl.deleteProgram(program);
+	});
+}
+
 async function audioTests() {
 	var ctx = new AudioContext();
 	var t = ctx.currentTime;
@@ -664,7 +907,7 @@ async function littlejsTests() {
 async function run() {
 	console.log('Ejecta device tests: ' + navigator.userAgent);
 	ejecta.include('canvas2d-test.js');
-	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, webgl2TextureTests, webgl2FramebufferTests, audioTests, fetchTests, littlejsTests];
+	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, webgl2TextureTests, webgl2FramebufferTests, webgl2UniformBufferTests, audioTests, fetchTests, littlejsTests];
 	for( var i = 0; i < steps.length; i++ ) {
 		try { await steps[i](); }
 		catch( e ) { check(steps[i].name, false, e + ' ' + e.stack); }

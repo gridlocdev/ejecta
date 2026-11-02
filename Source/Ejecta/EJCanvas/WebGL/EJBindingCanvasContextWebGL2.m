@@ -10,6 +10,8 @@
 - (id)initWithRenderingContext:(EJCanvasContextWebGL *)renderingContextp {
 	if( self = [super initWithRenderingContext:renderingContextp] ) {
 		samplers = [NSMutableDictionary new];
+		queries = [NSMutableDictionary new];
+		transformFeedbacks = [NSMutableDictionary new];
 	}
 	return self;
 }
@@ -21,17 +23,43 @@
 	for( NSNumber *n in samplers ) { GLuint sampler = n.intValue; glDeleteSamplers(1, &sampler); }
 	[samplers release];
 	
+	for( NSNumber *n in queries ) { GLuint query = n.intValue; glDeleteQueries(1, &query); }
+	[queries release];
+	
+	for( NSNumber *n in transformFeedbacks ) { GLuint tf = n.intValue; glDeleteTransformFeedbacks(1, &tf); }
+	[transformFeedbacks release];
+	
 	[EAGLContext setCurrentContext:oldContext];
 	[super dealloc];
 }
 
-- (void)deleteSampler:(GLuint)sampler {
-	NSNumber *key = @(sampler);
-	if( samplers[key] ) {
+// Deletes object with glDelete, if it's one of objects
+- (void)deleteObject:(GLuint)object from:(NSMutableDictionary *)objects
+	with:(void (*)(GLsizei, const GLuint *))glDelete
+{
+	NSNumber *key = @(object);
+	if( objects[key] ) {
 		scriptView.currentRenderingContext = renderingContext;
-		glDeleteSamplers(1, &sampler);
-		[samplers removeObjectForKey:key];
+		glDelete(1, &object);
+		[objects removeObjectForKey:key];
 	}
+}
+
+- (void)deleteSampler:(GLuint)sampler {
+	[self deleteObject:sampler from:samplers with:glDeleteSamplers];
+}
+
+- (void)deleteQuery:(GLuint)query {
+	[self deleteObject:query from:queries with:glDeleteQueries];
+}
+
+- (void)deleteTransformFeedback:(GLuint)transformFeedback {
+	[self deleteObject:transformFeedback from:transformFeedbacks with:glDeleteTransformFeedbacks];
+}
+
+- (void)deleteSync:(GLsync)sync {
+	scriptView.currentRenderingContext = renderingContext;
+	glDeleteSync(sync);
 }
 
 - (int)webglVersion {
@@ -100,6 +128,11 @@ EJ_BIND_FUNCTION(getParameter, ctx, argc, argv) {
 		case GL_SAMPLER_BINDING:
 			glGetIntegerv(pname, &intvalue);
 			return [self jsObjectOrNull:samplers[@(intvalue)] ctx:ctx];
+		
+		// WebGLTransformFeedback
+		case GL_TRANSFORM_FEEDBACK_BINDING:
+			glGetIntegerv(pname, &intvalue);
+			return [self jsObjectOrNull:transformFeedbacks[@(intvalue)] ctx:ctx];
 		
 		// WebGLVertexArrayObject
 		case GL_VERTEX_ARRAY_BINDING:
@@ -177,13 +210,22 @@ EJ_BIND_FUNCTION(bindVertexArray, ctx, argc, argv) {
 
 // Instancing
 
-EJ_BIND_FUNCTION_DIRECT(drawArraysInstanced, glDrawArraysInstanced, mode, first, count, instanceCount);
 EJ_BIND_FUNCTION_DIRECT(vertexAttribDivisor, glVertexAttribDivisor, index, divisor);
+
+EJ_BIND_FUNCTION(drawArraysInstanced, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum mode, GLint first, GLsizei count, GLsizei instanceCount);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	renderingContext.needsPresenting = YES;
+	glDrawArraysInstanced(mode, first, count, instanceCount);
+	return NULL;
+}
 
 EJ_BIND_FUNCTION(drawElementsInstanced, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLenum mode, GLsizei count, GLenum type, GLint offset, GLsizei instanceCount);
 	
 	scriptView.currentRenderingContext = renderingContext;
+	renderingContext.needsPresenting = YES;
 	glDrawElementsInstanced(mode, count, type, EJ_BUFFER_OFFSET(offset), instanceCount);
 	return NULL;
 }
@@ -632,8 +674,9 @@ EJ_BIND_FUNCTION(isSampler, ctx, argc, argv) {
 	if( argc < 1 ) { return NULL; }
 	
 	scriptView.currentRenderingContext = renderingContext;
-	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
-	return JSValueMakeBoolean(ctx, glIsSampler(sampler));
+	// 0 is OpenGL's default object, -1 another type of object
+	GLint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
+	return JSValueMakeBoolean(ctx, sampler > 0 && glIsSampler(sampler));
 }
 
 EJ_BIND_FUNCTION(bindSampler, ctx, argc, argv) {
@@ -699,8 +742,15 @@ EJ_BIND_FUNCTION(getSamplerParameter, ctx, argc, argv) {
 	return buffer;
 }
 
-EJ_BIND_FUNCTION_DIRECT(blitFramebuffer, glBlitFramebuffer,
-	srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+EJ_BIND_FUNCTION(blitFramebuffer, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
+		GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	renderingContext.needsPresenting = YES;
+	glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+	return NULL;
+}
 
 EJ_BIND_FUNCTION(renderbufferStorageMultisample, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
@@ -799,6 +849,7 @@ EJ_BIND_FUNCTION(invalidateSubFramebuffer, ctx, argc, argv) {
 		GLsizei needed = (buffer == GL_COLOR) ? 4 : 1; \
 		if( !values || srcOffset < 0 || count - srcOffset < needed ) { return NULL; } \
 		scriptView.currentRenderingContext = renderingContext; \
+		renderingContext.needsPresenting = YES; \
 		glClearBuffer##NAME(buffer, drawbuffer, values + srcOffset); \
 		return NULL; \
 	}
@@ -809,7 +860,14 @@ EJ_BIND_CLEAR_BUFFER(uiv, GLuint);
 
 #undef EJ_BIND_CLEAR_BUFFER
 
-EJ_BIND_FUNCTION_DIRECT(clearBufferfi, glClearBufferfi, buffer, drawbuffer, depth, stencil);
+EJ_BIND_FUNCTION(clearBufferfi, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	renderingContext.needsPresenting = YES;
+	glClearBufferfi(buffer, drawbuffer, depth, stencil);
+	return NULL;
+}
 
 EJ_BIND_FUNCTION(getInternalformatParameter, ctx, argc, argv) {
 	EJ_UNPACK_ARGV(GLenum target, GLenum internalformat, GLenum pname);
@@ -887,6 +945,613 @@ EJ_BIND_FUNCTION(readPixels, ctx, argc, argv) {
 	}];
 	return NULL;
 }
+
+
+// Uniforms
+
+#define EJ_ARGV_NUMBER(INDEX) (argc > INDEX ? JSValueToNumberFast(ctx, argv[INDEX]) : 0)
+
+#define EJ_BIND_UNIFORM(NAME, ... ) \
+	EJ_BIND_FUNCTION(uniform##NAME, ctx, argc, argv) { \
+		if( argc < EJ_ARGC(__VA_ARGS__)+1 ) { return NULL; } \
+		scriptView.currentRenderingContext = renderingContext; \
+		GLuint uniform = [EJBindingWebGLUniformLocation indexFromJSValue:argv[0]]; \
+		glUniform##NAME( uniform, EJ_MAP_EXT(1, _EJ_COMMA, _EJ_BIND_FUNCTION_DIRECT_UNPACK, __VA_ARGS__) ); \
+		return NULL; \
+	}
+
+	EJ_BIND_UNIFORM(1ui, x);
+	EJ_BIND_UNIFORM(2ui, x, y);
+	EJ_BIND_UNIFORM(3ui, x, y, z);
+	EJ_BIND_UNIFORM(4ui, x, y, z, w);
+
+#undef EJ_BIND_UNIFORM
+
+
+#define EJ_BIND_UNIFORM_V(NAME, LENGTH, TYPE) \
+	EJ_BIND_FUNCTION(uniform##NAME, ctx, argc, argv) { \
+		if ( argc < 2 ) { return NULL; } \
+		GLuint uniform = [EJBindingWebGLUniformLocation indexFromJSValue:argv[0]]; \
+		GLsizei count; \
+		TYPE *values = JSValueTo##TYPE##ArrayRange(ctx, argv[1], LENGTH, \
+			EJ_ARGV_NUMBER(2), EJ_ARGV_NUMBER(3), &count); \
+		if( values ) { \
+			scriptView.currentRenderingContext = renderingContext; \
+			glUniform##NAME(uniform, count, values); \
+		} \
+		return NULL; \
+	}
+
+	EJ_BIND_UNIFORM_V(1uiv, 1, GLuint);
+	EJ_BIND_UNIFORM_V(2uiv, 2, GLuint);
+	EJ_BIND_UNIFORM_V(3uiv, 3, GLuint);
+	EJ_BIND_UNIFORM_V(4uiv, 4, GLuint);
+
+#undef EJ_BIND_UNIFORM_V
+
+
+#define EJ_BIND_UNIFORM_MATRIX_V(NAME, LENGTH) \
+	EJ_BIND_FUNCTION(uniformMatrix##NAME, ctx, argc, argv) { \
+		if ( argc < 3 ) { return NULL; } \
+		GLuint uniform = [EJBindingWebGLUniformLocation indexFromJSValue:argv[0]]; \
+		GLboolean transpose = JSValueToNumberFast(ctx, argv[1]); \
+		GLsizei count; \
+		GLfloat *values = JSValueToGLfloatArrayRange(ctx, argv[2], LENGTH, \
+			EJ_ARGV_NUMBER(3), EJ_ARGV_NUMBER(4), &count); \
+		if( values ) { \
+			scriptView.currentRenderingContext = renderingContext; \
+			glUniformMatrix##NAME(uniform, count, transpose, values); \
+		} \
+		return NULL; \
+	}
+
+	EJ_BIND_UNIFORM_MATRIX_V(2x3fv, 6);
+	EJ_BIND_UNIFORM_MATRIX_V(3x2fv, 6);
+	EJ_BIND_UNIFORM_MATRIX_V(2x4fv, 8);
+	EJ_BIND_UNIFORM_MATRIX_V(4x2fv, 8);
+	EJ_BIND_UNIFORM_MATRIX_V(3x4fv, 12);
+	EJ_BIND_UNIFORM_MATRIX_V(4x3fv, 12);
+
+#undef EJ_BIND_UNIFORM_MATRIX_V
+
+EJ_BIND_FUNCTION(getFragDataLocation, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	NSString *name = JSValueToNSString(ctx, argv[1]);
+	return JSValueMakeNumber(ctx, glGetFragDataLocation(program, (name ?: @"").UTF8String));
+}
+
+
+// Uniform blocks
+
+EJ_BIND_FUNCTION(getUniformBlockIndex, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	NSString *name = JSValueToNSString(ctx, argv[1]);
+	return JSValueMakeNumber(ctx, glGetUniformBlockIndex(program, (name ?: @"").UTF8String));
+}
+
+EJ_BIND_FUNCTION(uniformBlockBinding, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	glUniformBlockBinding(program, JSValueToNumberFast(ctx, argv[1]), JSValueToNumberFast(ctx, argv[2]));
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getActiveUniformBlockName, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLuint index = JSValueToNumberFast(ctx, argv[1]);
+	
+	GLint length = 0;
+	glGetActiveUniformBlockiv(program, index, GL_UNIFORM_BLOCK_NAME_LENGTH, &length);
+	if( length <= 0 ) { return JSValueMakeNull(ctx); }
+	
+	GLchar *name = malloc(length);
+	glGetActiveUniformBlockName(program, index, length, NULL, name);
+	JSValueRef ret = NSStringToJSValue(ctx, @(name));
+	free(name);
+	return ret;
+}
+
+EJ_BIND_FUNCTION(getActiveUniformBlockParameter, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLuint index = JSValueToNumberFast(ctx, argv[1]);
+	GLenum pname = JSValueToNumberFast(ctx, argv[2]);
+	
+	GLint value = 0;
+	switch( pname ) {
+		// Uint32Array
+		case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES: {
+			glGetActiveUniformBlockiv(program, index, GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS, &value);
+			JSObjectRef array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeUint32Array, MAX(value, 0), NULL);
+			if( value > 0 ) {
+				glGetActiveUniformBlockiv(program, index, pname, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
+			}
+			return array;
+		}
+		
+		// boolean
+		case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER:
+		case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER:
+			glGetActiveUniformBlockiv(program, index, pname, &value);
+			return JSValueMakeBoolean(ctx, value);
+	}
+	
+	glGetActiveUniformBlockiv(program, index, pname, &value);
+	return JSValueMakeNumber(ctx, value);
+}
+
+EJ_BIND_FUNCTION(getUniformIndices, ctx, argc, argv) {
+	if( argc < 2 || !JSValueIsObject(ctx, argv[1]) ) { return NULL; }
+	
+	JSObjectRef jsNames = (JSObjectRef)argv[1];
+	JSStringRef jsLengthName = JSStringCreateWithUTF8CString("length");
+	GLsizei count = JSValueToNumberFast(ctx, JSObjectGetProperty(ctx, jsNames, jsLengthName, NULL));
+	JSStringRelease(jsLengthName);
+	if( count <= 0 ) { return JSObjectMakeArray(ctx, 0, NULL, NULL); }
+	
+	// The strings own the UTF-8 that names points to
+	NSMutableArray *strings = [NSMutableArray arrayWithCapacity:count];
+	const GLchar **names = malloc(count * sizeof(GLchar *));
+	for( int i = 0; i < count; i++ ) {
+		NSString *name = JSValueToNSString(ctx, JSObjectGetPropertyAtIndex(ctx, jsNames, i, NULL)) ?: @"";
+		[strings addObject:name];
+		names[i] = name.UTF8String;
+	}
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLuint *indices = malloc(count * sizeof(GLuint));
+	for( int i = 0; i < count; i++ ) { indices[i] = GL_INVALID_INDEX; }
+	glGetUniformIndices(program, count, names, indices);
+	
+	JSValueRef *values = malloc(count * sizeof(JSValueRef));
+	for( int i = 0; i < count; i++ ) {
+		values[i] = JSValueMakeNumber(ctx, indices[i]);
+	}
+	JSObjectRef array = JSObjectMakeArray(ctx, count, values, NULL);
+	free(values);
+	free(indices);
+	free(names);
+	return array;
+}
+
+EJ_BIND_FUNCTION(getActiveUniforms, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	GLsizei count;
+	GLuint *indices = JSValueToGLuintArray(ctx, argv[1], 1, &count);
+	if( !indices ) { return JSObjectMakeArray(ctx, 0, NULL, NULL); }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLenum pname = JSValueToNumberFast(ctx, argv[2]);
+	
+	GLint *params = calloc(count, sizeof(GLint));
+	glGetActiveUniformsiv(program, count, indices, pname, params);
+	
+	JSValueRef *values = malloc(count * sizeof(JSValueRef));
+	for( int i = 0; i < count; i++ ) {
+		values[i] = (pname == GL_UNIFORM_IS_ROW_MAJOR)
+			? JSValueMakeBoolean(ctx, params[i])
+			: JSValueMakeNumber(ctx, params[i]);
+	}
+	JSObjectRef array = JSObjectMakeArray(ctx, count, values, NULL);
+	free(values);
+	free(params);
+	return array;
+}
+
+
+// Vertex attributes
+
+EJ_BIND_FUNCTION_DIRECT(vertexAttribI4i, glVertexAttribI4i, index, x, y, z, w);
+EJ_BIND_FUNCTION_DIRECT(vertexAttribI4ui, glVertexAttribI4ui, index, x, y, z, w);
+
+#define EJ_BIND_VERTEXATTRIB_V(NAME, TYPE) \
+	EJ_BIND_FUNCTION(vertexAttrib##NAME, ctx, argc, argv) { \
+		if ( argc < 2 ) { return NULL; } \
+		GLuint index = JSValueToNumberFast(ctx, argv[0]); \
+		GLsizei count; \
+		TYPE *values = JSValueTo##TYPE##ArrayRange(ctx, argv[1], 4, EJ_ARGV_NUMBER(2), 4, &count); \
+		if( values ) { \
+			scriptView.currentRenderingContext = renderingContext; \
+			glVertexAttrib##NAME(index, values); \
+		} \
+		return NULL; \
+	} \
+
+	EJ_BIND_VERTEXATTRIB_V(I4iv, GLint);
+	EJ_BIND_VERTEXATTRIB_V(I4uiv, GLuint);
+
+#undef EJ_BIND_VERTEXATTRIB_V
+
+EJ_BIND_FUNCTION(vertexAttribIPointer, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLuint index, GLint size, GLenum type, GLsizei stride, GLint offset);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glVertexAttribIPointer(index, size, type, stride, EJ_BUFFER_OFFSET(offset));
+	return NULL;
+}
+
+
+// Buffers
+
+// The bytes of an ArrayBufferView from element srcOffset: length elements, or
+// all the rest if length is 0. NULL if that's outside the view.
+static GLubyte *EJTypedArrayRange(JSContextRef ctx, JSValueRef value,
+	GLsizei srcOffset, GLsizei length, size_t *byteLength)
+{
+	JSTypedArrayType type = JSValueGetTypedArrayType(ctx, value, NULL);
+	if( type == kJSTypedArrayTypeNone || type == kJSTypedArrayTypeArrayBuffer ) { return NULL; }
+	
+	size_t totalLength = 0;
+	GLubyte *bytes = JSValueGetTypedArrayPtr(ctx, value, &totalLength);
+	size_t elementSize = EJTypedArrayElementSize(type);
+	size_t count = totalLength / elementSize;
+	if( !bytes || srcOffset < 0 || length < 0 || srcOffset > count ) { return NULL; }
+	
+	size_t elements = length ? length : count - srcOffset;
+	if( elements > count - srcOffset ) { return NULL; }
+	
+	*byteLength = elements * elementSize;
+	return bytes + srcOffset * elementSize;
+}
+
+EJ_BIND_FUNCTION(bufferData, ctx, argc, argv) {
+	// bufferData(target, srcData, usage, srcOffset, length)
+	if( argc < 4 ) { return [super _func_bufferData:ctx argc:argc argv:argv]; }
+	
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLenum usage = JSValueToNumberFast(ctx, argv[2]);
+	size_t byteLength = 0;
+	GLubyte *bytes = EJTypedArrayRange(ctx, argv[1], JSValueToNumberFast(ctx, argv[3]), EJ_ARGV_NUMBER(4), &byteLength);
+	if( !bytes ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glBufferData(target, byteLength, bytes, usage);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(bufferSubData, ctx, argc, argv) {
+	// bufferSubData(target, dstByteOffset, srcData, srcOffset, length)
+	if( argc < 4 ) { return [super _func_bufferSubData:ctx argc:argc argv:argv]; }
+	
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLintptr dstByteOffset = JSValueToNumberFast(ctx, argv[1]);
+	size_t byteLength = 0;
+	GLubyte *bytes = EJTypedArrayRange(ctx, argv[2], JSValueToNumberFast(ctx, argv[3]), EJ_ARGV_NUMBER(4), &byteLength);
+	if( !bytes ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glBufferSubData(target, dstByteOffset, byteLength, bytes);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getBufferSubData, ctx, argc, argv) {
+	// getBufferSubData(target, srcByteOffset, dstBuffer, dstOffset, length)
+	if( argc < 3 ) { return NULL; }
+	
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLintptr srcByteOffset = JSValueToNumberFast(ctx, argv[1]);
+	size_t byteLength = 0;
+	GLubyte *bytes = EJTypedArrayRange(ctx, argv[2], EJ_ARGV_NUMBER(3), EJ_ARGV_NUMBER(4), &byteLength);
+	if( !bytes || !byteLength || srcByteOffset < 0 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	void *mapped = glMapBufferRange(target, srcByteOffset, byteLength, GL_MAP_READ_BIT);
+	if( mapped ) {
+		memcpy(bytes, mapped, byteLength);
+		glUnmapBuffer(target);
+	}
+	return NULL;
+}
+
+EJ_BIND_FUNCTION_DIRECT(copyBufferSubData, glCopyBufferSubData,
+	readTarget, writeTarget, readOffset, writeOffset, size);
+
+EJ_BIND_FUNCTION(bindBufferBase, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLuint index = JSValueToNumberFast(ctx, argv[1]);
+	glBindBufferBase(target, index, [EJBindingWebGLBuffer indexFromJSValue:argv[2]]);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(bindBufferRange, ctx, argc, argv) {
+	if( argc < 5 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLuint index = JSValueToNumberFast(ctx, argv[1]);
+	GLintptr offset = JSValueToNumberFast(ctx, argv[3]);
+	GLsizeiptr size = JSValueToNumberFast(ctx, argv[4]);
+	glBindBufferRange(target, index, [EJBindingWebGLBuffer indexFromJSValue:argv[2]], offset, size);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getIndexedParameter, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLuint index);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	// WebGLBuffer
+	if( target == GL_TRANSFORM_FEEDBACK_BUFFER_BINDING || target == GL_UNIFORM_BUFFER_BINDING ) {
+		GLint buffer = 0;
+		glGetIntegeri_v(target, index, &buffer);
+		return [self jsObjectOrNull:buffers[@(buffer)] ctx:ctx];
+	}
+	
+	// The start and size of a range
+	GLint64 value = 0;
+	glGetInteger64i_v(target, index, &value);
+	return JSValueMakeNumber(ctx, value);
+}
+
+EJ_BIND_FUNCTION(drawRangeElements, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, GLint offset);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	renderingContext.needsPresenting = YES;
+	glDrawRangeElements(mode, start, end, count, type, EJ_BUFFER_OFFSET(offset));
+	return NULL;
+}
+
+
+// Queries
+
+EJ_BIND_FUNCTION(createQuery, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLuint query;
+	glGenQueries(1, &query);
+	JSObjectRef obj = [EJBindingWebGLQuery createJSObjectWithContext:ctx
+		scriptView:scriptView webglContext:self index:query];
+	queries[@(query)] = [NSValue valueWithPointer:obj];
+	return obj;
+}
+
+EJ_BIND_FUNCTION(deleteQuery, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	[[EJBindingWebGLQuery webGLObjectFromJSValue:argv[0]] invalidate];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(isQuery, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	// 0 is OpenGL's default object, -1 another type of object
+	GLint query = [EJBindingWebGLQuery indexFromJSValue:argv[0]];
+	return JSValueMakeBoolean(ctx, query > 0 && glIsQuery(query));
+}
+
+EJ_BIND_FUNCTION(beginQuery, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	glBeginQuery(target, [EJBindingWebGLQuery indexFromJSValue:argv[1]]);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION_DIRECT(endQuery, glEndQuery, target);
+
+EJ_BIND_FUNCTION(getQuery, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLenum pname);
+	if( pname != GL_CURRENT_QUERY ) { return JSValueMakeNull(ctx); }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLint query = 0;
+	glGetQueryiv(target, pname, &query);
+	return [self jsObjectOrNull:queries[@(query)] ctx:ctx];
+}
+
+EJ_BIND_FUNCTION(getQueryParameter, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint query = [EJBindingWebGLQuery indexFromJSValue:argv[0]];
+	GLenum pname = JSValueToNumberFast(ctx, argv[1]);
+	
+	GLuint value = 0;
+	glGetQueryObjectuiv(query, pname, &value);
+	return (pname == GL_QUERY_RESULT_AVAILABLE)
+		? JSValueMakeBoolean(ctx, value)
+		: JSValueMakeNumber(ctx, value);
+}
+
+
+// Sync objects
+
+EJ_BIND_FUNCTION(fenceSync, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum condition, GLbitfield flags);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLsync sync = glFenceSync(condition, flags);
+	if( !sync ) { return JSValueMakeNull(ctx); }
+	
+	return [EJBindingWebGLSync createJSObjectWithContext:ctx
+		scriptView:scriptView webglContext:self sync:sync];
+}
+
+EJ_BIND_FUNCTION(deleteSync, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	[[EJBindingWebGLSync webGLObjectFromJSValue:argv[0]] invalidate];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(isSync, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLsync sync = [EJBindingWebGLSync syncFromJSValue:argv[0]];
+	return JSValueMakeBoolean(ctx, sync && glIsSync(sync));
+}
+
+EJ_BIND_FUNCTION(clientWaitSync, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	GLsync sync = [EJBindingWebGLSync syncFromJSValue:argv[0]];
+	if( !sync ) { return JSValueMakeNumber(ctx, GL_WAIT_FAILED); }
+	
+	// MAX_CLIENT_WAIT_TIMEOUT_WEBGL is 0: this only checks, it never blocks
+	scriptView.currentRenderingContext = renderingContext;
+	GLbitfield flags = JSValueToNumberFast(ctx, argv[1]);
+	return JSValueMakeNumber(ctx, glClientWaitSync(sync, flags, 0));
+}
+
+EJ_BIND_FUNCTION(waitSync, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	GLsync sync = [EJBindingWebGLSync syncFromJSValue:argv[0]];
+	if( !sync ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getSyncParameter, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	GLsync sync = [EJBindingWebGLSync syncFromJSValue:argv[0]];
+	if( !sync ) { return JSValueMakeNull(ctx); }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLenum pname = JSValueToNumberFast(ctx, argv[1]);
+	GLint value = 0;
+	glGetSynciv(sync, pname, 1, NULL, &value);
+	return JSValueMakeNumber(ctx, value);
+}
+
+
+// Transform feedback
+
+EJ_BIND_FUNCTION(createTransformFeedback, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLuint transformFeedback;
+	glGenTransformFeedbacks(1, &transformFeedback);
+	JSObjectRef obj = [EJBindingWebGLTransformFeedback createJSObjectWithContext:ctx
+		scriptView:scriptView webglContext:self index:transformFeedback];
+	transformFeedbacks[@(transformFeedback)] = [NSValue valueWithPointer:obj];
+	return obj;
+}
+
+EJ_BIND_FUNCTION(deleteTransformFeedback, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	[[EJBindingWebGLTransformFeedback webGLObjectFromJSValue:argv[0]] invalidate];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(isTransformFeedback, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	// 0 is OpenGL's default object, -1 another type of object
+	GLint transformFeedback = [EJBindingWebGLTransformFeedback indexFromJSValue:argv[0]];
+	return JSValueMakeBoolean(ctx, transformFeedback > 0 && glIsTransformFeedback(transformFeedback));
+}
+
+EJ_BIND_FUNCTION(bindTransformFeedback, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	glBindTransformFeedback(target, [EJBindingWebGLTransformFeedback indexFromJSValue:argv[1]]);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION_DIRECT(beginTransformFeedback, glBeginTransformFeedback, primitiveMode);
+
+EJ_BIND_FUNCTION(endTransformFeedback, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	glEndTransformFeedback();
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(pauseTransformFeedback, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	glPauseTransformFeedback();
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(resumeTransformFeedback, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	glResumeTransformFeedback();
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(transformFeedbackVaryings, ctx, argc, argv) {
+	if( argc < 3 || !JSValueIsObject(ctx, argv[1]) ) { return NULL; }
+	
+	JSObjectRef jsVaryings = (JSObjectRef)argv[1];
+	JSStringRef jsLengthName = JSStringCreateWithUTF8CString("length");
+	GLsizei count = JSValueToNumberFast(ctx, JSObjectGetProperty(ctx, jsVaryings, jsLengthName, NULL));
+	JSStringRelease(jsLengthName);
+	if( count < 0 ) { return NULL; }
+	
+	// The strings own the UTF-8 that varyings points to
+	NSMutableArray *strings = [NSMutableArray arrayWithCapacity:count];
+	const GLchar **varyings = malloc(MAX(count, 1) * sizeof(GLchar *));
+	for( int i = 0; i < count; i++ ) {
+		NSString *name = JSValueToNSString(ctx, JSObjectGetPropertyAtIndex(ctx, jsVaryings, i, NULL)) ?: @"";
+		[strings addObject:name];
+		varyings[i] = name.UTF8String;
+	}
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLenum bufferMode = JSValueToNumberFast(ctx, argv[2]);
+	glTransformFeedbackVaryings(program, count, varyings, bufferMode);
+	free(varyings);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getTransformFeedbackVarying, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint program = [EJBindingWebGLProgram indexFromJSValue:argv[0]];
+	GLuint index = JSValueToNumberFast(ctx, argv[1]);
+	
+	GLint varyings = 0, buffsize = 0;
+	glGetProgramiv(program, GL_TRANSFORM_FEEDBACK_VARYINGS, &varyings);
+	glGetProgramiv(program, GL_TRANSFORM_FEEDBACK_VARYING_MAX_LENGTH, &buffsize);
+	if( index >= varyings || buffsize <= 0 ) { return JSValueMakeNull(ctx); }
+	
+	GLchar *namebuffer = malloc(buffsize);
+	GLsizei length;
+	GLsizei size;
+	GLenum type;
+	glGetTransformFeedbackVarying(program, index, buffsize, &length, &size, &type, namebuffer);
+	
+	NSString *name = @(namebuffer);
+	free(namebuffer);
+	
+	return [EJBindingWebGLActiveInfo createJSObjectWithContext:ctx
+		scriptView:scriptView size:size type:type name:name];
+}
+
+#undef EJ_ARGV_NUMBER
 
 
 // ------------------------------------------------------------------------------------

@@ -16,6 +16,16 @@ extern "C" {
 GLfloat *JSValueToGLfloatArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
 GLint *JSValueToGLintArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
 GLuint *JSValueToGLuintArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
+
+// The elements of value from srcOffset on: srcLength of them, or all the rest
+// if srcLength is 0. NULL if that's outside value or not a whole number of
+// elementSize groups. WebGL 2's uniform*v calls take these offsets.
+GLfloat *JSValueToGLfloatArrayRange(JSContextRef ctx, JSValueRef value, GLsizei elementSize,
+	GLsizei srcOffset, GLsizei srcLength, GLsizei *numElements);
+GLint *JSValueToGLintArrayRange(JSContextRef ctx, JSValueRef value, GLsizei elementSize,
+	GLsizei srcOffset, GLsizei srcLength, GLsizei *numElements);
+GLuint *JSValueToGLuintArrayRange(JSContextRef ctx, JSValueRef value, GLsizei elementSize,
+	GLsizei srcOffset, GLsizei srcLength, GLsizei *numElements);
 GLuint EJGetBytesPerPixel(GLenum type, GLenum format);
 
 // OpenGL ES 3 takes float textures only with a sized internal format, and

@@ -23,7 +23,7 @@ TYPE *NAME(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *num
 		JSStringRelease(jsLengthName); \
 		\
 		if( count && (count % elementSize) == 0 ) { \
-			NSMutableData *buffer = [NSMutableData dataWithCapacity:count * sizeof(TYPE)]; \
+			NSMutableData *buffer = [NSMutableData dataWithLength:count * sizeof(TYPE)]; \
 			TYPE *values = buffer.mutableBytes; \
 			for( int i = 0; i < count; i++ ) { \
 				values[i] = JSValueToNumberFast(ctx, JSObjectGetPropertyAtIndex(ctx, jsObject, i, NULL)); \
@@ -42,6 +42,26 @@ CREATE_JS_VALUE_TO_ARRAY_FUNC( JSValueToGLintArray, GLint, kJSTypedArrayTypeInt3
 CREATE_JS_VALUE_TO_ARRAY_FUNC( JSValueToGLuintArray, GLuint, kJSTypedArrayTypeUint32Array);
 
 #undef CREATE_JS_VALUE_TO_ARRAY_FUNC
+
+#define CREATE_JS_VALUE_TO_ARRAY_RANGE_FUNC(NAME, TYPE) \
+TYPE *NAME##Range(JSContextRef ctx, JSValueRef value, GLsizei elementSize, \
+	GLsizei srcOffset, GLsizei srcLength, GLsizei *numElements \
+) { \
+	*numElements = 0; \
+	GLsizei count; \
+	TYPE *values = NAME(ctx, value, 1, &count); \
+	if( !values || srcOffset < 0 || srcLength < 0 || srcOffset > count ) { return NULL; } \
+	GLsizei length = srcLength ? srcLength : count - srcOffset; \
+	if( !length || length > count - srcOffset || (length % elementSize) != 0 ) { return NULL; } \
+	*numElements = length / elementSize; \
+	return values + srcOffset; \
+}
+
+CREATE_JS_VALUE_TO_ARRAY_RANGE_FUNC( JSValueToGLfloatArray, GLfloat );
+CREATE_JS_VALUE_TO_ARRAY_RANGE_FUNC( JSValueToGLintArray, GLint );
+CREATE_JS_VALUE_TO_ARRAY_RANGE_FUNC( JSValueToGLuintArray, GLuint );
+
+#undef CREATE_JS_VALUE_TO_ARRAY_RANGE_FUNC
 
 
 GLuint EJGetBytesPerPixel(GLenum type, GLenum format) {

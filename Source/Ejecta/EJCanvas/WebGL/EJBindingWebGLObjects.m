@@ -176,6 +176,51 @@
 @end
 
 
+@implementation EJBindingWebGLQuery
+- (void)invalidate {
+	[(EJBindingCanvasContextWebGL2 *)webglContext deleteQuery:index];
+	[super invalidate];
+}
+@end
+
+
+@implementation EJBindingWebGLTransformFeedback
+- (void)invalidate {
+	[(EJBindingCanvasContextWebGL2 *)webglContext deleteTransformFeedback:index];
+	[super invalidate];
+}
+@end
+
+
+@implementation EJBindingWebGLSync
+- (void)invalidate {
+	if( sync ) {
+		[(EJBindingCanvasContextWebGL2 *)webglContext deleteSync:sync];
+		sync = NULL;
+	}
+	[super invalidate];
+}
+
++ (GLsync)syncFromJSValue:(JSValueRef)value {
+	EJBindingWebGLSync *binding = (EJBindingWebGLSync *)[self webGLObjectFromJSValue:value];
+	return binding ? binding->sync : NULL;
+}
+
++ (JSObjectRef)createJSObjectWithContext:(JSContextRef)ctx
+	scriptView:(EJJavaScriptView *)view
+	webglContext:(EJBindingCanvasContextWebGL *)webglContext
+	sync:(GLsync)sync
+{
+	EJBindingWebGLSync *native = [[self alloc] initWithWebGLContext:webglContext index:0];
+	native->sync = sync;
+	
+	JSObjectRef obj = [self createJSObjectWithContext:ctx scriptView:view instance:native];
+	[native release];
+	return obj;
+}
+@end
+
+
 @implementation EJBindingWebGLActiveInfo
 
 - (id)initWithSize:(GLint)sizep type:(GLenum)typep name:(NSString *)namep {

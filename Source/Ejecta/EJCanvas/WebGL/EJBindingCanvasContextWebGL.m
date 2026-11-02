@@ -1158,6 +1158,17 @@ EJ_BIND_FUNCTION(getUniform, ctx, argc, argv) {
 			found = true;
 			break;
 		}
+		
+		// The other elements of an array, "name[0]"
+		NSString *name = @(nameBuffer);
+		if( numElements > 1 && [name hasSuffix:@"[0]"] ) {
+			NSString *base = [name substringToIndex:name.length - 3];
+			for( int j = 1; j < numElements && !found; j++ ) {
+				NSString *element = [NSString stringWithFormat:@"%@[%d]", base, j];
+				found = (glGetUniformLocation(program, element.UTF8String) == uniform);
+			}
+			if( found ) { break; }
+		}
 	}
 	
 	free(nameBuffer);
@@ -1168,21 +1179,49 @@ EJ_BIND_FUNCTION(getUniform, ctx, argc, argv) {
 	// Figure out the element type and size
 	GLint type = GL_NONE, size = 0;
 	switch( elementType ) {
-		case GL_FLOAT:		type = GL_FLOAT; size = 1; break;
-		case GL_FLOAT_VEC2:	type = GL_FLOAT; size = 2; break;
-		case GL_FLOAT_VEC3:	type = GL_FLOAT; size = 3; break;
-		case GL_FLOAT_VEC4:	type = GL_FLOAT; size = 4; break;
-		case GL_BOOL:		type = GL_BOOL;	 size = 1; break;
-		case GL_BOOL_VEC2:	type = GL_BOOL;	 size = 2; break;
-		case GL_BOOL_VEC3:	type = GL_BOOL;	 size = 3; break;
-		case GL_BOOL_VEC4:	type = GL_BOOL;	 size = 4; break;
-		case GL_INT:		type = GL_INT;	 size = 1; break;
-		case GL_INT_VEC2:	type = GL_INT;	 size = 2; break;
-		case GL_INT_VEC3:	type = GL_INT;	 size = 3; break;
-		case GL_INT_VEC4:	type = GL_INT;	 size = 4; break;
-		case GL_FLOAT_MAT2:	type = GL_FLOAT; size = 4; break;
-		case GL_FLOAT_MAT3:	type = GL_FLOAT; size = 9; break;
-		case GL_FLOAT_MAT4:	type = GL_FLOAT; size = 16; break;
+		case GL_FLOAT:				type = GL_FLOAT; size = 1; break;
+		case GL_FLOAT_VEC2:			type = GL_FLOAT; size = 2; break;
+		case GL_FLOAT_VEC3:			type = GL_FLOAT; size = 3; break;
+		case GL_FLOAT_VEC4:			type = GL_FLOAT; size = 4; break;
+		case GL_BOOL:				type = GL_BOOL;	 size = 1; break;
+		case GL_BOOL_VEC2:			type = GL_BOOL;	 size = 2; break;
+		case GL_BOOL_VEC3:			type = GL_BOOL;	 size = 3; break;
+		case GL_BOOL_VEC4:			type = GL_BOOL;	 size = 4; break;
+		case GL_INT:				type = GL_INT;	 size = 1; break;
+		case GL_INT_VEC2:			type = GL_INT;	 size = 2; break;
+		case GL_INT_VEC3:			type = GL_INT;	 size = 3; break;
+		case GL_INT_VEC4:			type = GL_INT;	 size = 4; break;
+		case GL_UNSIGNED_INT:		type = GL_UNSIGNED_INT; size = 1; break;
+		case GL_UNSIGNED_INT_VEC2:	type = GL_UNSIGNED_INT; size = 2; break;
+		case GL_UNSIGNED_INT_VEC3:	type = GL_UNSIGNED_INT; size = 3; break;
+		case GL_UNSIGNED_INT_VEC4:	type = GL_UNSIGNED_INT; size = 4; break;
+		case GL_FLOAT_MAT2:			type = GL_FLOAT; size = 4; break;
+		case GL_FLOAT_MAT3:			type = GL_FLOAT; size = 9; break;
+		case GL_FLOAT_MAT4:			type = GL_FLOAT; size = 16; break;
+		case GL_FLOAT_MAT2x3:
+		case GL_FLOAT_MAT3x2:		type = GL_FLOAT; size = 6; break;
+		case GL_FLOAT_MAT2x4:
+		case GL_FLOAT_MAT4x2:		type = GL_FLOAT; size = 8; break;
+		case GL_FLOAT_MAT3x4:
+		case GL_FLOAT_MAT4x3:		type = GL_FLOAT; size = 12; break;
+		
+		// Samplers: the texture unit
+		case GL_SAMPLER_2D:
+		case GL_SAMPLER_3D:
+		case GL_SAMPLER_CUBE:
+		case GL_SAMPLER_2D_SHADOW:
+		case GL_SAMPLER_2D_ARRAY:
+		case GL_SAMPLER_2D_ARRAY_SHADOW:
+		case GL_SAMPLER_CUBE_SHADOW:
+		case GL_INT_SAMPLER_2D:
+		case GL_INT_SAMPLER_3D:
+		case GL_INT_SAMPLER_CUBE:
+		case GL_INT_SAMPLER_2D_ARRAY:
+		case GL_UNSIGNED_INT_SAMPLER_2D:
+		case GL_UNSIGNED_INT_SAMPLER_3D:
+		case GL_UNSIGNED_INT_SAMPLER_CUBE:
+		case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
+									type = GL_INT;	 size = 1; break;
 	};
 	
 	// Single value
@@ -1195,6 +1234,11 @@ EJ_BIND_FUNCTION(getUniform, ctx, argc, argv) {
 		else if( type == GL_INT ) {
 			int value;
 			glGetUniformiv(program, uniform, &value);
+			return JSValueMakeNumber(ctx, value);
+		}
+		else if( type == GL_UNSIGNED_INT ) {
+			GLuint value;
+			glGetUniformuiv(program, uniform, &value);
 			return JSValueMakeNumber(ctx, value);
 		}
 		else if( type == GL_BOOL ) {
@@ -1216,7 +1260,13 @@ EJ_BIND_FUNCTION(getUniform, ctx, argc, argv) {
 	// Int32Array
 	else if( type == GL_INT ) {
 		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, size, NULL);
-		glGetUniformfv(program, uniform, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
+		glGetUniformiv(program, uniform, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
+	}
+	
+	// Uint32Array
+	else if( type == GL_UNSIGNED_INT ) {
+		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeUint32Array, size, NULL);
+		glGetUniformuiv(program, uniform, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
 	}
 	
 	// boolean[]
@@ -1263,8 +1313,17 @@ EJ_BIND_FUNCTION(getVertexAttrib, ctx, argc, argv) {
 	}
 	else if( pname == GL_CURRENT_VERTEX_ATTRIB ) {
 		JSObjectRef array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, 4, NULL);
-		glGetVertexAttribiv(index, pname, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
+		glGetVertexAttribfv(index, pname, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
 		return array;
+	}
+	else if(
+		pname == GL_VERTEX_ATTRIB_ARRAY_ENABLED ||
+		pname == GL_VERTEX_ATTRIB_ARRAY_NORMALIZED ||
+		pname == GL_VERTEX_ATTRIB_ARRAY_INTEGER
+	) {
+		GLint value;
+		glGetVertexAttribiv(index, pname, &value);
+		return JSValueMakeBoolean(ctx, value);
 	}
 	else {
 		GLint value;
@@ -1716,12 +1775,17 @@ EJ_BIND_FUNCTION(texParameteri, ctx, argc, argv) {
 #undef EJ_BIND_UNIFORM
 
 
+// WebGL 2 adds srcOffset and srcLength to the uniform*v calls; WebGL 1 code
+// doesn't pass them, so both take them
+#define EJ_ARGV_NUMBER(INDEX) (argc > INDEX ? JSValueToNumberFast(ctx, argv[INDEX]) : 0)
+
 #define EJ_BIND_UNIFORM_V(NAME, LENGTH, TYPE) \
 	EJ_BIND_FUNCTION(uniform##NAME, ctx, argc, argv) { \
 		if ( argc < 2 ) { return NULL; } \
 		GLuint uniform = [EJBindingWebGLUniformLocation indexFromJSValue:argv[0]]; \
 		GLsizei count; \
-		TYPE *values = JSValueTo##TYPE##Array(ctx, argv[1], LENGTH, &count); \
+		TYPE *values = JSValueTo##TYPE##ArrayRange(ctx, argv[1], LENGTH, \
+			EJ_ARGV_NUMBER(2), EJ_ARGV_NUMBER(3), &count); \
 		if( values ) { \
 			scriptView.currentRenderingContext = renderingContext; \
 			glUniform##NAME(uniform, count, values); \
@@ -1747,7 +1811,8 @@ EJ_BIND_FUNCTION(texParameteri, ctx, argc, argv) {
 		GLuint uniform = [EJBindingWebGLUniformLocation indexFromJSValue:argv[0]]; \
 		GLboolean transpose = JSValueToNumberFast(ctx, argv[1]); \
 		GLsizei count; \
-		TYPE *values = JSValueTo##TYPE##Array(ctx, argv[2], LENGTH, &count); \
+		TYPE *values = JSValueTo##TYPE##ArrayRange(ctx, argv[2], LENGTH, \
+			EJ_ARGV_NUMBER(3), EJ_ARGV_NUMBER(4), &count); \
 		if( values ) { \
 			scriptView.currentRenderingContext = renderingContext; \
 			glUniformMatrix##NAME(uniform, count, transpose, values); \
@@ -1760,6 +1825,7 @@ EJ_BIND_FUNCTION(texParameteri, ctx, argc, argv) {
 	EJ_BIND_UNIFORM_MATRIX_V(4fv, 16, GLfloat);
 
 #undef EJ_BIND_UNIFORM_MATRIX_V
+#undef EJ_ARGV_NUMBER
 
 
 EJ_BIND_FUNCTION(useProgram, ctx, argc, argv) {

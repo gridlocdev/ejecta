@@ -68,6 +68,23 @@
 @interface EJBindingWebGLSampler : EJBindingWebGLObject
 @end
 
+@interface EJBindingWebGLQuery : EJBindingWebGLObject
+@end
+
+@interface EJBindingWebGLTransformFeedback : EJBindingWebGLObject
+@end
+
+// OpenGL's sync objects are pointers, not numbers
+@interface EJBindingWebGLSync : EJBindingWebGLObject {
+	GLsync sync;
+}
++ (GLsync)syncFromJSValue:(JSValueRef)value;
++ (JSObjectRef)createJSObjectWithContext:(JSContextRef)ctx
+	scriptView:(EJJavaScriptView *)scriptView
+	webglContext:(EJBindingCanvasContextWebGL *)webglContext
+	sync:(GLsync)sync;
+@end
+
 @interface EJBindingWebGLActiveInfo : EJBindingBase {
 	GLint size;
 	GLenum type;

@@ -6,8 +6,13 @@
 
 @interface EJBindingCanvasContextWebGL2 : EJBindingCanvasContextWebGL {
 	NSMutableDictionary *samplers;
+	NSMutableDictionary *queries;
+	NSMutableDictionary *transformFeedbacks;
 }
 
 - (void)deleteSampler:(GLuint)sampler;
+- (void)deleteQuery:(GLuint)query;
+- (void)deleteTransformFeedback:(GLuint)transformFeedback;
+- (void)deleteSync:(GLsync)sync;
 
 @end
