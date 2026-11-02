@@ -109,8 +109,9 @@ run-sim: build-sim
     xcrun simctl launch --console-pty "{{sim_name}}" {{bundle_id}}
 
 # Run tools/device-tests in a fresh tvOS Simulator: real canvas, WebGL, audio (replaces App/)
-test-sim:
+test-sim: _littlejs
     rm -rf App && cp -R tools/device-tests/App App
+    cp extras/littlejs/vendor/littlejs.js extras/littlejs/littlejs-ejecta.js App/
     just build-sim
     python3 tools/device-tests/run_sim.py {{sim_app}} {{bundle_id}}
 

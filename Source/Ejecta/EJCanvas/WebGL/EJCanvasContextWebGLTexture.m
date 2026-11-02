@@ -19,10 +19,19 @@
 		(msaaEnabled ? [NSString stringWithFormat:@"yes (%d samples)", msaaSamples] : @"no")
 	);
 	
+	// Get the previously bound frame- and renderbuffers. If none are bound
+	// yet (a new canvas), use the default buffers: binding 0 would leave
+	// an offscreen canvas drawing to no framebuffer at all.
 	GLint previousFrameBuffer;
 	GLint previousRenderBuffer;
 	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &previousFrameBuffer );
 	glGetIntegerv( GL_RENDERBUFFER_BINDING, &previousRenderBuffer );
+	if( !previousFrameBuffer ) {
+		previousFrameBuffer = EJ_WEBGL_DEFAULT_FRAMEBUFFER;
+	}
+	if( !previousRenderBuffer ) {
+		previousRenderBuffer = EJ_WEBGL_DEFAULT_RENDERBUFFER;
+	}
 	
 	glBindFramebuffer(GL_FRAMEBUFFER, viewFrameBuffer);
 	glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);

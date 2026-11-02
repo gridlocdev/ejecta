@@ -73,6 +73,8 @@ function webglTests() {
 	var gl = canvas.getContext('webgl');
 	if( !gl ) { return check('webgl context', false); }
 
+	console.log('INFO webgl: ' + gl.getParameter(gl.VERSION) + ', ' + gl.getParameter(gl.RENDERER) +
+		', framebuffer ' + (gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE ? 'complete' : 'incomplete'));
 	gl.clearColor(0, 1, 0, 1);
 	gl.clear(gl.COLOR_BUFFER_BIT);
 	var px = new Uint8Array(4);
@@ -104,13 +106,23 @@ function webglTests() {
 	}
 	catch( e ) { check('webgl draw', false, e.message); }
 
-	// Draw a WebGL canvas into a 2D canvas
+	// Draw a WebGL canvas into a 2D canvas: top half (GL y 4..8) red,
+	// bottom half green, so a flip would show
+	gl.enable(gl.SCISSOR_TEST);
+	gl.scissor(0, 0, 8, 4);
+	gl.clearColor(0, 1, 0, 1);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.scissor(0, 4, 8, 4);
+	gl.clearColor(1, 0, 0, 1);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.disable(gl.SCISSOR_TEST);
 	var target = document.createElement('canvas');
 	target.width = target.height = 8;
 	var ctx = target.getContext('2d');
 	ctx.drawImage(canvas, 0, 0);
-	var copied = rgba(ctx.getImageData(4, 4, 1, 1).data);
-	check('webgl canvas drawn into 2d', same(copied, [255, 0, 0, 255], 4), copied);
+	var top = rgba(ctx.getImageData(4, 1, 1, 1).data), bottom = rgba(ctx.getImageData(4, 6, 1, 1).data);
+	check('webgl canvas drawn into 2d, upright', same(top, [255, 0, 0, 255], 4) && same(bottom, [0, 255, 0, 255], 4),
+		top + ' / ' + bottom);
 }
 
 function webgl2Tests() {
@@ -201,9 +213,24 @@ async function fetchTests() {
 	check('fetch missing file is 404', missing.status === 404);
 }
 
+// Last, as LittleJS takes over the screen. just test-sim copies LittleJS and
+// the shim in; without them this is skipped.
+async function littlejsTests() {
+	if( (await fetch('littlejs.js')).status !== 200 ) {
+		return skip('littlejs', 'littlejs.js is not in the app');
+	}
+	ejecta.include('littlejs.js');
+	ejecta.include('littlejs-ejecta.js');
+	ejecta.include('littlejs-test.js');
+	await new Promise(function( resolve ) {
+		check.done = resolve;
+		littlejsTest(check);
+	});
+}
+
 async function run() {
 	console.log('Ejecta device tests: ' + navigator.userAgent);
-	var steps = [canvasTests, webglTests, webgl2Tests, audioTests, fetchTests];
+	var steps = [canvasTests, webglTests, webgl2Tests, audioTests, fetchTests, littlejsTests];
 	for( var i = 0; i < steps.length; i++ ) {
 		try { await steps[i](); }
 		catch( e ) { check(steps[i].name, false, e + ' ' + e.stack); }

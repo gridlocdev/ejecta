@@ -296,6 +296,9 @@ window.document = {
 		if( name === 'canvas' ) {
 			var canvas = new Ejecta.Canvas();
 			canvas.type = 'canvas';
+			// Offscreen canvases get no events (e.g. webglcontextlost never
+			// happens), but scripts can listen for them
+			canvas.addEventListener = canvas.removeEventListener = function() {};
 			return canvas;
 		}
 		else if( name == 'audio' ) {
