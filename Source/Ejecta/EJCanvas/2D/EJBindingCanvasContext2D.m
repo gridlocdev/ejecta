@@ -265,7 +265,7 @@ EJ_BIND_FUNCTION(drawImage, ctx, argc, argv) {
 	NSObject<EJDrawable> *drawable = (NSObject<EJDrawable> *)JSValueGetPrivate(argv[0]);
 	EJTexture *image = drawable.texture;
 	
-	if( !image.textureId ) { return NULL; }
+	if( !image.isLoaded ) { return NULL; }
 	
 	short sx = 0, sy = 0, sw, sh;
 	float dx, dy, dw, dh;

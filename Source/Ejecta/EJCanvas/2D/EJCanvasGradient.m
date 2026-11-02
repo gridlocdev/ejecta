@@ -74,13 +74,10 @@
 	
 	NSData *pixels = [self getPixelsWithWidth:EJ_CANVAS_GRADIENT_WIDTH forSortedStops:sortedStops];
 	
-	// Create or update Texture
-	if( !texture ) {
-		texture = [[EJTexture alloc] initWithWidth:EJ_CANVAS_GRADIENT_WIDTH height:1 pixels:pixels];
-	}
-	else {
-		[texture updateWithPixels:pixels atX:0 y:0 width:EJ_CANVAS_GRADIENT_WIDTH height:1];
-	}
+	// A new texture each time, so drawing already queued with the old
+	// stops keeps them
+	[texture release];
+	texture = [[EJTexture alloc] initWithWidth:EJ_CANVAS_GRADIENT_WIDTH height:1 pixels:pixels];
 }
 
 - (NSData *)getPixelsWithWidth:(int)width forSortedStops:(NSArray *)stops {

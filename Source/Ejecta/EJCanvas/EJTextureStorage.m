@@ -9,6 +9,7 @@
 	if( self = [super init] ) {
 		glGenTextures(1, &textureId);
 		immutable = NO;
+		ownsTexture = YES;
 	}
 	return self;
 }
@@ -17,12 +18,22 @@
 	if( self = [super init] ) {
 		glGenTextures(1, &textureId);
 		immutable = YES;
+		ownsTexture = YES;
+	}
+	return self;
+}
+
+- (id)initWithExistingTexture:(GLuint)texture {
+	if( self = [super init] ) {
+		textureId = texture;
+		immutable = YES;
+		ownsTexture = NO;
 	}
 	return self;
 }
 
 - (void)dealloc {
-	if( textureId ) {
+	if( textureId && ownsTexture ) {
 		glDeleteTextures(1, &textureId);
 	}
 	[super dealloc];

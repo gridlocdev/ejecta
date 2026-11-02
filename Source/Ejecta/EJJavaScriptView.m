@@ -1,4 +1,5 @@
 #import "EJJavaScriptView.h"
+#import "EJSharedMetalContext.h"
 #import "EJTimer.h"
 #import "EJBindingBase.h"
 #import "EJClassLoader.h"
@@ -393,6 +394,9 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 	// Redraw the canvas
 	self.currentRenderingContext = screenRenderingContext;
 	[screenRenderingContext present];
+	
+	// Send this frame's Canvas2D drawing to the GPU, if presenting didn't
+	[EJSharedMetalContext.instance commit];
 }
 
 
@@ -433,11 +437,17 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 - (void)setCurrentRenderingContext:(EJCanvasContext *)renderingContext {
 	if( renderingContext != currentRenderingContext ) {
 		[currentRenderingContext flushBuffers];
+		
+		// Leaving a WebGL context: submit its commands, so Metal sees what it
+		// drew into textures they share
+		if( currentRenderingContext.glContext ) {
+			glFlush();
+		}
 		[currentRenderingContext release];
 		
-		// Switch GL Context if different
-		if( renderingContext && renderingContext.glContext != glCurrentContext ) {
-			glFlush();
+		// Switch GL Context if different. Canvas2D contexts have none; the
+		// current one stays current for OpenGL resources.
+		if( renderingContext.glContext && renderingContext.glContext != glCurrentContext ) {
 			glCurrentContext = renderingContext.glContext;
 			[EAGLContext setCurrentContext:glCurrentContext];
 		}

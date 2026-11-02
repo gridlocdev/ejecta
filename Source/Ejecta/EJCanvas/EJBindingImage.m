@@ -62,7 +62,7 @@
 	[loadCallback release];
 	loadCallback = nil;
 	
-	if( texture.lazyLoaded || texture.textureId ) {
+	if( texture.isLoaded ) {
 		[self triggerEvent:@"load"];
 	}
 	else {
@@ -118,7 +118,7 @@ EJ_BIND_GET(height, ctx ) {
 }
 
 EJ_BIND_GET(complete, ctx ) {
-	return JSValueMakeBoolean(ctx, (texture && (texture.lazyLoaded || texture.textureId)) );
+	return JSValueMakeBoolean(ctx, (texture && texture.isLoaded) );
 }
 
 EJ_BIND_EVENT(load);

@@ -1,4 +1,5 @@
 #import "EJBindingCanvas.h"
+#import "EJSharedMetalContext.h"
 
 #import "EJCanvasContext2DScreen.h"
 #import "EJCanvasContext2DTexture.h"
@@ -243,7 +244,12 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 			if( [options[@"antialias"] boolValue] ) {
 				int msaaSamples = (int)[options[@"antialiasSamples"] integerValue];
 				int maxSamples = 2;
-				glGetIntegerv(GL_MAX_SAMPLES_APPLE, &maxSamples);
+				if( contextMode == kEJCanvasContextMode2D ) {
+					maxSamples = EJSharedMetalContext.instance.maxSamples;
+				}
+				else {
+					glGetIntegerv(GL_MAX_SAMPLES_APPLE, &maxSamples);
+				}
 			
 				renderingContext.msaaEnabled = maxSamples > 1;
 				renderingContext.msaaSamples = MAX(2, MIN(maxSamples, msaaSamples));
@@ -260,7 +266,9 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 		scriptView.screenRenderingContext.style = style;
 	}
 	
-	[EAGLContext setCurrentContext:renderingContext.glContext];
+	if( renderingContext.glContext ) {
+		[EAGLContext setCurrentContext:renderingContext.glContext];
+	}
 	[renderingContext create];
 	scriptView.currentRenderingContext = renderingContext;
 	

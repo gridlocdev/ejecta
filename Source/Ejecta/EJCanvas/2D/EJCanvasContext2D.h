@@ -2,12 +2,18 @@
 
 // All drawing operations go through one of the pushQuad, pushRect etc. methods
 // which transform and write vertex and texture coords into a buffer. This
-// buffer is automatically flushed (i.e. rendered to the screen) whenever some
-// OpenGL state changes (texture or shader bindings, blend modes, etc.), when
-// the frame needs presenting or simply when the buffer is full.
+// buffer is automatically flushed (i.e. drawn with Metal) whenever some
+// state changes (texture or shader, blend modes, stencil, etc.), when the
+// frame needs presenting or simply when the buffer is full.
 
 // This ensures that even when drawing thousands of sprites, only one draw call
-// to OpenGL is issued, provided that no texture changes happen in between.
+// is issued, provided that no texture changes happen in between.
+
+// The canvas pixels are a Metal texture (BGRA, top row first). Drawing goes
+// into it through a render pass that stays open until another canvas draws,
+// pixels are read back or the frame ends. Clears are done by the next render
+// pass's load action. Clipping and filling concave paths use a depth-stencil
+// texture made the first time either is needed.
 
 // Path and Font rendering are handled by the EJPath and EJFont classes.
 
@@ -19,7 +25,7 @@
 #import "EJCanvasContext.h"
 #import "EJFont.h"
 #import "EJFontCache.h"
-#import "EJSharedOpenGLContext.h"
+#import "EJSharedMetalContext.h"
 
 #define EJ_CANVAS_STATE_STACK_SIZE 16
 
@@ -69,7 +75,7 @@ typedef enum {
 	kEJCompositeOperationDestinationAtop
 } EJCompositeOperation;
 
-typedef struct { GLenum source; GLenum destination; float alphaFactor; } EJCompositeOperationFunc;
+typedef struct { MTLBlendFactor source; MTLBlendFactor destination; float alphaFactor; } EJCompositeOperationFunc;
 extern const EJCompositeOperationFunc EJCompositeOperationFuncs[];
 
 @class EJCanvasPattern;
@@ -134,15 +140,25 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 
 
 @class EJJavaScriptView;
-@interface EJCanvasContext2D : EJCanvasContext {
-	GLuint viewFrameBuffer, viewRenderBuffer;
-	GLuint msaaFrameBuffer, msaaRenderBuffer;
-	GLuint stencilBuffer;
+#define EJ_CANVAS_VERTEX_BUFFER_SIZE 4096
+
+@interface EJCanvasContext2D : EJCanvasContext <EJMetalEncoderOwner> {
+	EJTexture *texture;
+	id<MTLTexture> msaaTexture;
+	id<MTLTexture> depthStencilTexture;
 	GLubyte stencilMask;
+	
+	id<MTLRenderCommandEncoder> encoder;
+	BOOL clearColorPending, clearDepthPending, clearStencilPending;
+	EJ2DDepthStencil depthStencil;
+	BOOL colorWrite;
+	EJCompositeOperation blendOperation;
+	float radialGradient[8];
+	id<MTLRenderPipelineState> boundPipeline;
 	
 	short bufferWidth, bufferHeight;
 	
-	GLenum textureFilter;
+	BOOL nearestFilter;
 	EJTexture *currentTexture;
 	EJPath *path;
 	
@@ -159,8 +175,8 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 	EJFontCache *fontCache;
 	
 	EJJavaScriptView *scriptView;
-	EJGLProgram2D *currentProgram;
-	EJSharedOpenGLContext *sharedGLContext;
+	EJ2DProgram currentProgram;
+	EJSharedMetalContext *metal;
 }
 
 - (id)initWithScriptView:(EJJavaScriptView *)scriptViewp width:(short)widthp height:(short)heightp;
@@ -168,10 +184,12 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 - (void)resizeToWidth:(short)newWidth height:(short)newHeight;
 - (void)resetFramebuffer;
 - (void)createStencilBufferOnce;
-- (void)bindVertexBuffer;
 - (void)prepare;
 - (void)setTexture:(EJTexture *)newTexture;
-- (void)setProgram:(EJGLProgram2D *)program;
+- (void)setProgram:(EJ2DProgram)program;
+- (void)clearDepth;
+- (void)clearStencil;
+- (void)endRenderPass;
 - (void)pushTriX1:(float)x1 y1:(float)y1 x2:(float)x2 y2:(float)y2
 	x3:(float)x3 y3:(float)y3
 	color:(EJColorRGBA)color
@@ -241,6 +259,9 @@ static inline EJColorRGBA EJCanvasBlendStrokeColor( EJCanvasState *state ) {
 @property (nonatomic, retain) NSObject<EJFillable> *strokeObject;
 @property (nonatomic) BOOL imageSmoothingEnabled;
 @property (nonatomic) GLubyte stencilMask;
+@property (nonatomic) EJ2DDepthStencil depthStencil;
+@property (nonatomic) BOOL colorWrite;
+@property (nonatomic, readonly) EJTexture *texture;
 
 /* TODO: not yet implemented:
 	shadowOffsetX

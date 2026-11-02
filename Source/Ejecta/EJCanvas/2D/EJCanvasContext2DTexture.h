@@ -2,10 +2,6 @@
 
 #import "EJCanvasContext2D.h"
 
-@interface EJCanvasContext2DTexture : EJCanvasContext2D {
-	EJTexture *texture;
-}
-
-@property (readonly, nonatomic) EJTexture *texture;
+@interface EJCanvasContext2DTexture : EJCanvasContext2D
 
 @end

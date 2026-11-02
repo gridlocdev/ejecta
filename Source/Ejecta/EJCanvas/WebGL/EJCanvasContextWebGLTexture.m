@@ -3,6 +3,7 @@
 @implementation EJCanvasContextWebGLTexture
 
 - (void)dealloc {
+	[texture waitForMetalReads];
 	[texture release];
 	[super dealloc];
 }
@@ -37,9 +38,11 @@
 	glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
 	
 	// Release previous texture if any, create the new texture and set it as
-	// the rendering target for this framebuffer
+	// the rendering target for this framebuffer. It's a surface Metal can
+	// read too, so Canvas2D draws it without copying.
+	[texture waitForMetalReads];
 	[texture release];
-	texture = [[EJTexture alloc] initAsRenderTargetWithWidth:newWidth height:newHeight fbo:viewFrameBuffer];
+	texture = [[EJTexture alloc] initAsInteropRenderTargetWithWidth:newWidth height:newHeight];
 	texture.drawFlippedY = true;
 	
 	glBindFramebuffer(GL_FRAMEBUFFER, viewFrameBuffer);
@@ -76,7 +79,17 @@
 		needsPresenting = NO;
 	}
 	
+	// Submit what was drawn, so Metal sees it when it reads the surface
+	if( EAGLContext.currentContext == glContext ) {
+		glFlush();
+	}
 	return texture;
+}
+
+- (void)prepare {
+	// Canvas2D may still be reading the last frame from the surface
+	[texture waitForMetalReads];
+	[super prepare];
 }
 
 @end

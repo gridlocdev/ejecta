@@ -31,8 +31,6 @@
 		B63D256816E8DF23007E6034 /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B63D256716E8DF23007E6034 /* CFNetwork.framework */; };
 		B63D256A16E8DF33007E6034 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B63D256916E8DF33007E6034 /* Security.framework */; };
 		B63D256D16E8E0EE007E6034 /* EJBindingWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = B63D256C16E8DFAB007E6034 /* EJBindingWebSocket.m */; };
-		B64C87AC16B81BAA0097CD5B /* EJGLProgram2D.m in Sources */ = {isa = PBXBuildFile; fileRef = B64C87A816B80F410097CD5B /* EJGLProgram2D.m */; };
-		B64C87AE16B81BAA0097CD5B /* EJGLProgram2DRadialGradient.m in Sources */ = {isa = PBXBuildFile; fileRef = B64C87AA16B80F4C0097CD5B /* EJGLProgram2DRadialGradient.m */; };
 		B64CE662166682700087CF94 /* EJAppViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE611166682700087CF94 /* EJAppViewController.m */; };
 		B64CE663166682700087CF94 /* EJAudioSourceAVAudio.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE615166682700087CF94 /* EJAudioSourceAVAudio.m */; };
 		B64CE664166682700087CF94 /* EJAudioSourceOpenAL.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE617166682700087CF94 /* EJAudioSourceOpenAL.m */; };
@@ -108,8 +106,6 @@
 		B6F714891BCF126A0082A90F /* LaunchScreen-Logo.png in Resources */ = {isa = PBXBuildFile; fileRef = B637065F1A27C15200F42B90 /* LaunchScreen-Logo.png */; };
 		B6F7148B1BCF126A0082A90F /* Ejecta.js in Resources */ = {isa = PBXBuildFile; fileRef = B64CE63F166682700087CF94 /* Ejecta.js */; };
 		B6F714911BCF126A0082A90F /* EJBindingTextMetrics.m in Sources */ = {isa = PBXBuildFile; fileRef = B630048816C1A1960036D8D4 /* EJBindingTextMetrics.m */; };
-		B6F714921BCF126A0082A90F /* EJGLProgram2D.m in Sources */ = {isa = PBXBuildFile; fileRef = B64C87A816B80F410097CD5B /* EJGLProgram2D.m */; };
-		B6F714931BCF126A0082A90F /* EJGLProgram2DRadialGradient.m in Sources */ = {isa = PBXBuildFile; fileRef = B64C87AA16B80F4C0097CD5B /* EJGLProgram2DRadialGradient.m */; };
 		B6F714941BCF126A0082A90F /* EJAppViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE611166682700087CF94 /* EJAppViewController.m */; };
 		B6F714951BCF126A0082A90F /* EJAudioSourceAVAudio.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE615166682700087CF94 /* EJAudioSourceAVAudio.m */; };
 		B6F714961BCF126A0082A90F /* EJAudioSourceOpenAL.m in Sources */ = {isa = PBXBuildFile; fileRef = B64CE617166682700087CF94 /* EJAudioSourceOpenAL.m */; };
@@ -196,6 +192,14 @@
 		EA1D10000000000000000068 /* EJAudioEffects.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000066 /* EJAudioEffects.c */; };
 		EA1D1000000000000000006B /* EJAudioDecodeOgg.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000006A /* EJAudioDecodeOgg.c */; };
 		EA1D1000000000000000006C /* EJAudioDecodeOgg.c in Sources */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000006A /* EJAudioDecodeOgg.c */; };
+		EA1D10000000000000000082 /* EJSharedMetalContext.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000081 /* EJSharedMetalContext.m */; };
+		EA1D10000000000000000083 /* EJSharedMetalContext.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000081 /* EJSharedMetalContext.m */; };
+		EA1D10000000000000000086 /* EJMetalView.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000085 /* EJMetalView.m */; };
+		EA1D10000000000000000087 /* EJMetalView.m in Sources */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000085 /* EJMetalView.m */; };
+		EA1D10000000000000000089 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000088 /* Metal.framework */; };
+		EA1D1000000000000000008A /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA1D10000000000000000088 /* Metal.framework */; };
+		EA1D1000000000000000008C /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000008B /* CoreVideo.framework */; };
+		EA1D1000000000000000008D /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA1D1000000000000000008B /* CoreVideo.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -231,10 +235,6 @@
 		B63D256916E8DF33007E6034 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		B63D256B16E8DFAB007E6034 /* EJBindingWebSocket.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EJBindingWebSocket.h; sourceTree = "<group>"; };
 		B63D256C16E8DFAB007E6034 /* EJBindingWebSocket.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EJBindingWebSocket.m; sourceTree = "<group>"; };
-		B64C87A716B80F400097CD5B /* EJGLProgram2D.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EJGLProgram2D.h; sourceTree = "<group>"; };
-		B64C87A816B80F410097CD5B /* EJGLProgram2D.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EJGLProgram2D.m; sourceTree = "<group>"; };
-		B64C87A916B80F450097CD5B /* EJGLProgram2DRadialGradient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EJGLProgram2DRadialGradient.h; sourceTree = "<group>"; };
-		B64C87AA16B80F4C0097CD5B /* EJGLProgram2DRadialGradient.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EJGLProgram2DRadialGradient.m; sourceTree = "<group>"; };
 		B64CE610166682700087CF94 /* EJAppViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAppViewController.h; sourceTree = "<group>"; };
 		B64CE611166682700087CF94 /* EJAppViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = EJAppViewController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
 		B64CE613166682700087CF94 /* EJAudioSource.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioSource.h; sourceTree = "<group>"; };
@@ -279,7 +279,6 @@
 		B64CE651166682700087CF94 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
 		B64CE661166682700087CF94 /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		B64CE689166682B10087CF94 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B659D3121A4F6FE300B9AEF9 /* EJCanvasShaders.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EJCanvasShaders.h; sourceTree = "<group>"; };
 		B664B9891699F3370093E04E /* EJBindingCanvasPattern.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJBindingCanvasPattern.h; sourceTree = "<group>"; };
 		B664B98A1699F3380093E04E /* EJBindingCanvasPattern.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJBindingCanvasPattern.m; sourceTree = "<group>"; };
 		B664B98C1699F49B0093E04E /* EJCanvasPattern.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJCanvasPattern.h; sourceTree = "<group>"; };
@@ -379,6 +378,12 @@
 		EA1D10000000000000000069 /* EJAudioDecodeOgg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJAudioDecodeOgg.h; sourceTree = "<group>"; };
 		EA1D1000000000000000006A /* EJAudioDecodeOgg.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = EJAudioDecodeOgg.c; sourceTree = "<group>"; };
 		EA1D1000000000000000006D /* EJPathDash.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJPathDash.h; sourceTree = "<group>"; };
+		EA1D10000000000000000080 /* EJSharedMetalContext.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJSharedMetalContext.h; sourceTree = "<group>"; };
+		EA1D10000000000000000081 /* EJSharedMetalContext.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJSharedMetalContext.m; sourceTree = "<group>"; };
+		EA1D10000000000000000084 /* EJMetalView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EJMetalView.h; sourceTree = "<group>"; };
+		EA1D10000000000000000085 /* EJMetalView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EJMetalView.m; sourceTree = "<group>"; };
+		EA1D10000000000000000088 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		EA1D1000000000000000008B /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -405,6 +410,8 @@
 				B607AB67132EA6C300D7C3EA /* OpenAL.framework in Frameworks */,
 				B607AC33132EA75F00D7C3EA /* AudioToolbox.framework in Frameworks */,
 				B607AD0A132EB51000D7C3EA /* OpenGLES.framework in Frameworks */,
+				EA1D10000000000000000089 /* Metal.framework in Frameworks */,
+				EA1D1000000000000000008C /* CoreVideo.framework in Frameworks */,
 				B607AD10132EB52400D7C3EA /* QuartzCore.framework in Frameworks */,
 				B6CFCCD91332F152001F17AF /* AVFoundation.framework in Frameworks */,
 			);
@@ -431,6 +438,8 @@
 				B6F714E41BCF126A0082A90F /* OpenAL.framework in Frameworks */,
 				B6F714E51BCF126A0082A90F /* AudioToolbox.framework in Frameworks */,
 				B6F714E61BCF126A0082A90F /* OpenGLES.framework in Frameworks */,
+				EA1D1000000000000000008A /* Metal.framework in Frameworks */,
+				EA1D1000000000000000008D /* CoreVideo.framework in Frameworks */,
 				B6C83BB01C039B7600E6C012 /* JavaScriptCore.framework in Frameworks */,
 				B6F714E71BCF126A0082A90F /* QuartzCore.framework in Frameworks */,
 				B6F714E81BCF126A0082A90F /* AVFoundation.framework in Frameworks */,
@@ -484,6 +493,8 @@
 				B607AB66132EA6C300D7C3EA /* OpenAL.framework */,
 				B607AC32132EA75F00D7C3EA /* AudioToolbox.framework */,
 				B607AD09132EB51000D7C3EA /* OpenGLES.framework */,
+				EA1D10000000000000000088 /* Metal.framework */,
+				EA1D1000000000000000008B /* CoreVideo.framework */,
 				B6CFCCD81332F152001F17AF /* AVFoundation.framework */,
 			);
 			name = Frameworks;
@@ -524,6 +535,8 @@
 				3EF00C5816C29360004599A4 /* EJJavaScriptView.m */,
 				B699669C16CC5799006B9456 /* EJSharedOpenGLContext.h */,
 				B699669D16CC579B006B9456 /* EJSharedOpenGLContext.m */,
+				EA1D10000000000000000080 /* EJSharedMetalContext.h */,
+				EA1D10000000000000000081 /* EJSharedMetalContext.m */,
 				B630048A16CB097F0036D8D4 /* EJClassLoader.h */,
 				B630048B16CB09850036D8D4 /* EJClassLoader.m */,
 				B64CE61E166682700087CF94 /* EJBindingBase.h */,
@@ -594,6 +607,8 @@
 				B699669A16CC55F4006B9456 /* EJSharedTextureCache.m */,
 				B64CE625166682700087CF94 /* EAGLView.h */,
 				B64CE626166682700087CF94 /* EAGLView.m */,
+				EA1D10000000000000000084 /* EJMetalView.h */,
+				EA1D10000000000000000085 /* EJMetalView.m */,
 			);
 			path = EJCanvas;
 			sourceTree = "<group>";
@@ -685,7 +700,6 @@
 				B6F114F11676BD40001F1324 /* EJCanvasContext2DScreen.m */,
 				B6F114F21676BD40001F1324 /* EJCanvasContext2DTexture.h */,
 				B6F114F31676BD40001F1324 /* EJCanvasContext2DTexture.m */,
-				B659D3121A4F6FE300B9AEF9 /* EJCanvasShaders.h */,
 				B664B9891699F3370093E04E /* EJBindingCanvasPattern.h */,
 				B664B98A1699F3380093E04E /* EJBindingCanvasPattern.m */,
 				B664B98C1699F49B0093E04E /* EJCanvasPattern.h */,
@@ -710,10 +724,6 @@
 				B6F115021676BDB3001F1324 /* EJCanvas2DTypes.h */,
 				B6F115041676BE18001F1324 /* EJConvertColorRGBA.h */,
 				B6F115051676BE18001F1324 /* EJConvertColorRGBA.m */,
-				B64C87A716B80F400097CD5B /* EJGLProgram2D.h */,
-				B64C87A816B80F410097CD5B /* EJGLProgram2D.m */,
-				B64C87A916B80F450097CD5B /* EJGLProgram2DRadialGradient.h */,
-				B64C87AA16B80F4C0097CD5B /* EJGLProgram2DRadialGradient.m */,
 			);
 			path = 2D;
 			sourceTree = "<group>";
@@ -842,8 +852,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				B630048916C1A2390036D8D4 /* EJBindingTextMetrics.m in Sources */,
-				B64C87AC16B81BAA0097CD5B /* EJGLProgram2D.m in Sources */,
-				B64C87AE16B81BAA0097CD5B /* EJGLProgram2DRadialGradient.m in Sources */,
 				B64CE662166682700087CF94 /* EJAppViewController.m in Sources */,
 				B64CE663166682700087CF94 /* EJAudioSourceAVAudio.m in Sources */,
 				B64CE664166682700087CF94 /* EJAudioSourceOpenAL.m in Sources */,
@@ -903,6 +911,8 @@
 				B699669816CC4E6E006B9456 /* EJTextureStorage.m in Sources */,
 				B699669B16CC55F5006B9456 /* EJSharedTextureCache.m in Sources */,
 				B699669E16CC579E006B9456 /* EJSharedOpenGLContext.m in Sources */,
+				EA1D10000000000000000082 /* EJSharedMetalContext.m in Sources */,
+				EA1D10000000000000000086 /* EJMetalView.m in Sources */,
 				B6E02BC016D4110D00616925 /* EJNonRetainingProxy.m in Sources */,
 				B63D256616E8DE23007E6034 /* SRWebSocket.m in Sources */,
 				B63D256D16E8E0EE007E6034 /* EJBindingWebSocket.m in Sources */,
@@ -920,8 +930,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				B6F714911BCF126A0082A90F /* EJBindingTextMetrics.m in Sources */,
-				B6F714921BCF126A0082A90F /* EJGLProgram2D.m in Sources */,
-				B6F714931BCF126A0082A90F /* EJGLProgram2DRadialGradient.m in Sources */,
 				B6F714941BCF126A0082A90F /* EJAppViewController.m in Sources */,
 				B6F714951BCF126A0082A90F /* EJAudioSourceAVAudio.m in Sources */,
 				B6F714961BCF126A0082A90F /* EJAudioSourceOpenAL.m in Sources */,
@@ -978,6 +986,8 @@
 				B6F714C71BCF126A0082A90F /* EJTextureStorage.m in Sources */,
 				B6F714C81BCF126A0082A90F /* EJSharedTextureCache.m in Sources */,
 				B6F714C91BCF126A0082A90F /* EJSharedOpenGLContext.m in Sources */,
+				EA1D10000000000000000083 /* EJSharedMetalContext.m in Sources */,
+				EA1D10000000000000000087 /* EJMetalView.m in Sources */,
 				B6F714CA1BCF126A0082A90F /* EJNonRetainingProxy.m in Sources */,
 				B6F714CB1BCF126A0082A90F /* SRWebSocket.m in Sources */,
 				B6F714CC1BCF126A0082A90F /* EJBindingWebSocket.m in Sources */,

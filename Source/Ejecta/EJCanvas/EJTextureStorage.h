@@ -25,10 +25,13 @@ typedef EJTextureParam EJTextureParams[kEJTextureParamLast];
 	EJTextureParams params;
 	GLuint textureId;
 	BOOL immutable;
+	BOOL ownsTexture;
 	NSTimeInterval lastBound;
 }
 - (id)init;
 - (id)initImmutable;
+// For a texture someone else deletes, e.g. one made by a CoreVideo texture cache
+- (id)initWithExistingTexture:(GLuint)texture;
 - (void)bindToTarget:(GLenum)target withParams:(EJTextureParam *)newParams;
 
 @property (readonly, nonatomic) GLuint textureId;

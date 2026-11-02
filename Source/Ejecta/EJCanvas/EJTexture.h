@@ -14,6 +14,16 @@
 // attributes. This also allows us to release and reload the texture's pixel
 // data on demand while keeping the Texture itself around.
 
+// Canvas2D draws with Metal, WebGL with OpenGL ES. Each texture lives in one
+// of them and is copied into the other when that one asks for it:
+//  - Images, ImageData, fonts, gradients and 2D canvases are Metal textures.
+//    When WebGL uses one, an OpenGL copy is made from its pixels.
+//  - WebGL textures are OpenGL textures; Canvas2D never draws those.
+//  - An offscreen WebGL canvas renders into an IOSurface that is both an
+//    OpenGL and a Metal texture, so drawing it into a 2D canvas copies
+//    nothing. Metal waits for OpenGL with glFlush; the WebGL context waits
+//    for Metal to finish reading before it draws into it again.
+
 // All textures are represented with premultiplied alpha in memory. However,
 // ImageData objects for 2D Canvases expect the raw pixel data to be
 // unpremultiplied, so this class provides some static methods to premultiply
@@ -23,6 +33,8 @@
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+#import <Metal/Metal.h>
+#import <CoreVideo/CoreVideo.h>
 
 #import "EJTextureStorage.h"
 
@@ -40,6 +52,17 @@
 	
 	EJTextureParams params;
 	NSBlockOperation *loadCallback;
+	
+	BOOL forWebGL;
+	BOOL isMetalRenderTarget;
+	id<MTLTexture> metalTexture;
+	NSTimeInterval metalLastUsed;
+	
+	// IOSurface shared by OpenGL and Metal, for offscreen WebGL canvases
+	CVPixelBufferRef interopPixelBuffer;
+	CVOpenGLESTextureRef interopGLTexture;
+	CVMetalTextureRef interopMetalTexture;
+	id<MTLCommandBuffer> metalReader;
 }
 - (id)initEmptyForWebGL;
 - (id)initWithPath:(NSString *)path;
@@ -51,6 +74,20 @@
 - (id)initWithWidth:(int)widthp height:(int)heightp pixels:(NSData *)pixels;
 - (id)initAsRenderTargetWithWidth:(int)widthp height:(int)heightp fbo:(GLuint)fbo;
 - (id)initWithUIImage:(UIImage *)image;
+
+// The pixels of a 2D canvas: a Metal texture it renders into
+- (id)initAsMetalRenderTargetWithWidth:(int)widthp height:(int)heightp;
+// Wraps a Metal texture, e.g. a copy of a canvas
+- (id)initWithMetalTexture:(id<MTLTexture>)texture;
+// The pixels of an offscreen WebGL canvas: OpenGL renders, Metal samples
+- (id)initAsInteropRenderTargetWithWidth:(int)widthp height:(int)heightp;
+
+// Called by Canvas2D when it draws with this texture, and by WebGL before it
+// renders into it again
+- (void)markMetalRead:(id<MTLCommandBuffer>)commandBuffer;
+- (void)waitForMetalReads;
+
+- (void)maybeReleaseMetalStorage;
 
 - (void)maybeReleaseStorage;
 
@@ -83,6 +120,8 @@
 @property (readonly, nonatomic) BOOL lazyLoaded;
 @property (readonly, nonatomic) NSMutableData *pixels;
 @property (readonly, nonatomic) GLuint textureId;
+@property (readonly, nonatomic) id<MTLTexture> metalTexture;
+@property (readonly, nonatomic) BOOL isLoaded;
 @property (readonly, nonatomic) GLenum format;
 @property (readonly, nonatomic) short width, height;
 @property (readonly, nonatomic) NSTimeInterval lastUsed;

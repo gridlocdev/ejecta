@@ -4,11 +4,11 @@
 
 @implementation EJCanvasContext2DScreen
 @synthesize style;
-@synthesize view = glview;
+@synthesize view = metalView;
 
 - (void)dealloc {
-	[glview removeFromSuperview];
-	[glview release];
+	[metalView removeFromSuperview];
+	[metalView release];
 	[super dealloc];
 }
 
@@ -20,17 +20,17 @@
 		// Must resize
 		style = newStyle;
 		
-		// Only resize if we already have a viewFrameBuffer. Otherwise the style
-		// will be honored in the 'create' call.
-		if( viewFrameBuffer ) {
+		// Only resize if we already have a view. Otherwise the style will be
+		// honored in the 'create' call.
+		if( metalView ) {
 			[self resizeToWidth:width height:height];
 		}
 	}
 	else {
 		// Just reposition
 		style = newStyle;
-		if( glview ) {
-			glview.frame = self.frame;
+		if( metalView ) {
+			metalView.frame = self.frame;
 		}
 	}
 }
@@ -49,6 +49,18 @@
 - (void)resizeToWidth:(short)newWidth height:(short)newHeight {
 	[self flushBuffers];
 	
+	// Only the style changed: move and scale the view, keep the pixels
+	if( texture && metalView && newWidth == width && newHeight == height ) {
+		CGRect frame = self.frame;
+		float contentScale = MAX(width/frame.size.width, height/frame.size.height);
+		metalView.frame = frame;
+		metalView.contentScaleFactor = contentScale;
+		metalView.layer.contentsScale = contentScale;
+		metalView.metalLayer.drawableSize = CGSizeMake(MAX(width, 1), MAX(height, 1));
+		needsPresenting = YES;
+		return;
+	}
+	
 	width = newWidth;
 	height = newHeight;
 	
@@ -56,52 +68,40 @@
 	float contentScale = MAX(width/frame.size.width, height/frame.size.height);
 	
 	NSLog(
-		@"Creating ScreenCanvas (2D): "
+		@"Creating ScreenCanvas (2D, Metal): "
 			@"size: %dx%d, "
 			@"style: %.0fx%.0f, "
-			@"antialias: %@, preserveDrawingBuffer: %@",
+			@"antialias: %@",
 		width, height, 
 		frame.size.width, frame.size.height,
-		(msaaEnabled ? [NSString stringWithFormat:@"yes (%d samples)", msaaSamples] : @"no"),
-		(preserveDrawingBuffer ? @"yes" : @"no")
+		(msaaEnabled ? [NSString stringWithFormat:@"yes (%d samples)", msaaSamples] : @"no")
 	);
 	
-	
-	if( !glview ) {
-		// Create the OpenGL UIView with final screen size and content scaling (retina)
-		glview = [[EAGLView alloc] initWithFrame:frame contentScale:contentScale retainedBacking:preserveDrawingBuffer];
-		
-		// Append the OpenGL view to Ejecta's main view
-		[scriptView addSubview:glview];
+	if( !metalView ) {
+		metalView = [[EJMetalView alloc] initWithFrame:frame device:metal.device];
+		[scriptView addSubview:metalView];
 	}
 	else {
-		// Resize an existing view
-		glview.frame = frame;
-		glview.contentScaleFactor = contentScale;
-		glview.layer.contentsScale = contentScale;
+		metalView.frame = frame;
 	}
+	metalView.contentScaleFactor = contentScale;
+	metalView.layer.contentsScale = contentScale;
+	metalView.metalLayer.drawableSize = CGSizeMake(MAX(width, 1), MAX(height, 1));
 	
-	// Set up the renderbuffer
-	glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
-	[glContext renderbufferStorage:GL_RENDERBUFFER fromDrawable:(CAEAGLLayer *)glview.layer];
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, viewRenderBuffer);
+	bufferWidth = width;
+	bufferHeight = height;
 	
-	// The renderbuffer may be bigger than the requested size; make sure to store the real
-	// renderbuffer size.
-	GLint rbWidth, rbHeight;
-	glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &rbWidth);
-	glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &rbHeight);
-	bufferWidth = rbWidth;
-	bufferHeight = rbHeight;
-	
-	// Flip the screen - OpenGL has the origin in the bottom left corner. We want the top left.
-	upsideDown = true;
+	// Drawing goes into a texture of our own, copied to the screen on
+	// present(); so the pixels stay when the drawable is swapped
+	[metal endEncoderIfOwner:self];
+	[texture release];
+	texture = [[EJTexture alloc] initAsMetalRenderTargetWithWidth:width height:height];
 	
 	[super resetFramebuffer];
 }
 
 - (void)finish {
-	glFinish();
+	[metal commitAndWait];
 }
 
 - (void)present {
@@ -109,31 +109,36 @@
 	
 	if( !needsPresenting ) { return; }
 	
-	if( msaaEnabled ) {
-		//Bind the MSAA and View frameBuffers and resolve
-		glBindFramebuffer(GL_READ_FRAMEBUFFER_APPLE, msaaFrameBuffer);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER_APPLE, viewFrameBuffer);
-		glResolveMultisampleFramebufferAPPLE();
-		
-		glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
-		[glContext presentRenderbuffer:GL_RENDERBUFFER];
-		glBindFramebuffer(GL_FRAMEBUFFER, msaaFrameBuffer);
+	[self endRenderPass];
+	
+	id<CAMetalDrawable> drawable = [metalView.metalLayer nextDrawable];
+	id<MTLTexture> source = texture.metalTexture;
+	if( drawable && source ) {
+		id<MTLTexture> target = drawable.texture;
+		id<MTLBlitCommandEncoder> blit = [metal blitEncoder];
+		[blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+			sourceSize:MTLSizeMake(MIN(source.width, target.width), MIN(source.height, target.height), 1)
+			toTexture:target destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+		[metal endEncoder];
+		[metal.commandBuffer presentDrawable:drawable];
 	}
-	else {
-		[glContext presentRenderbuffer:GL_RENDERBUFFER];
-	}
+	[metal commit];
 	needsPresenting = NO;
 }
 
 - (EJTexture *)texture {
-	// This context may not be the current one, but it has to be in order for
-	// glReadPixels to succeed.
-	EJCanvasContext *previousContext = scriptView.currentRenderingContext;
-	scriptView.currentRenderingContext = self;
+	// Drawn into itself: a copy of the pixels as they are now
+	if( scriptView.currentRenderingContext == self ) {
+		[self endRenderPass];
+		id<MTLTexture> copy = [metal newCopyOfTexture:texture.metalTexture];
+		EJTexture *snapshot = [[[EJTexture alloc] initWithMetalTexture:copy] autorelease];
+		[copy release];
+		return snapshot;
+	}
 	
-	EJTexture *texture = [self getImageDataSx:0 sy:0 sw:width sh:height].texture;
-	
-	scriptView.currentRenderingContext = previousContext;
+	// Drawn into another canvas: the pixels directly. Metal runs the
+	// drawing in order, so everything drawn so far shows.
+	[self endRenderPass];
 	return texture;
 }
 

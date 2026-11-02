@@ -1,40 +1,28 @@
-// The Shared OpenGL Context provides compiled shaders and the main vertex
-// buffer to all Canvas2D Contexts. With this, an offscreen Canvas2D does not
-// have to recompile its own shaders or allocate its own buffer again. All
-// Canvas2D contexts can also share the same underlying EAGLContext, which
-// makes switching between canvases pretty fast.
+// The Shared OpenGL Context holds the EAGL sharegroup all WebGL contexts are
+// created in, so textures made by one (and images uploaded for one) can be
+// used by all of them. Its own EAGLContext is current whenever no WebGL
+// context is, so OpenGL resources can always be created and released.
 
-// In contrast, WebGL Contexts do not use this class. Each WebGL Context will
-// create its own EAGLContext so it can manage all the OpenGL state itself.
+// Canvas2D does not use OpenGL; it draws with Metal (EJSharedMetalContext).
+// The CoreVideo texture cache here gives offscreen WebGL canvases surfaces
+// that Metal can read as well.
 
 #import <Foundation/Foundation.h>
-#import "EJGLProgram2D.h"
-#import "EJGLProgram2DRadialGradient.h"
-
-#define EJ_OPENGL_VERTEX_BUFFER_SIZE (32 * 1024) // 32kb
+#import <OpenGLES/EAGL.h>
+#import <OpenGLES/ES2/gl.h>
+#import <OpenGLES/ES2/glext.h>
+#import <CoreVideo/CoreVideo.h>
 
 @interface EJSharedOpenGLContext : NSObject {
-	EJGLProgram2D *programFlat;
-	EJGLProgram2D *programTexture;
-	EJGLProgram2D *programAlphaTexture;
-	EJGLProgram2D *programPattern;
-	EJGLProgram2DRadialGradient *programRadialGradient;
-	
 	EAGLContext *glContext2D;
 	EAGLSharegroup *glSharegroup;
-	NSMutableData *vertexBuffer;
+	CVOpenGLESTextureCacheRef textureCache;
 }
 
 + (EJSharedOpenGLContext *)instance;
 
-@property (nonatomic, readonly) EJGLProgram2D *programFlat;
-@property (nonatomic, readonly) EJGLProgram2D *programTexture;
-@property (nonatomic, readonly) EJGLProgram2D *programAlphaTexture;
-@property (nonatomic, readonly) EJGLProgram2D *programPattern;
-@property (nonatomic, readonly) EJGLProgram2DRadialGradient *programRadialGradient;
-
 @property (nonatomic, readonly) EAGLContext *glContext2D;
 @property (nonatomic, readonly) EAGLSharegroup *glSharegroup;
-@property (nonatomic, readonly) NSMutableData *vertexBuffer;
+@property (nonatomic, readonly) CVOpenGLESTextureCacheRef textureCache;
 
 @end

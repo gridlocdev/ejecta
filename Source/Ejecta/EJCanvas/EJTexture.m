@@ -4,6 +4,8 @@
 #import "EJConvertWebGL.h"
 
 #import "EJSharedTextureCache.h"
+#import "EJSharedOpenGLContext.h"
+#import "EJSharedMetalContext.h"
 #import "EJJavaScriptView.h"
 
 #define PVR_TEXTURE_FLAG_TYPE_MASK 0xff
@@ -29,6 +31,15 @@ typedef struct {
 	uint32_t numSurfs;
 } PVRTextureHeader;
 
+@interface EJTexture ()
+- (void)releaseInterop;
+- (void)ensureLoaded;
+- (EJTextureStorage *)glStorage;
+- (void)createMetalTextureWithPixels:(NSData *)pixels;
+- (void)uploadCompressedMetalPixels:(NSData *)pixels;
+- (void)createGLStorageWithPixels:(NSData *)pixels target:(GLenum)target;
+@end
+
 @implementation EJTexture
 @synthesize format;
 @synthesize drawFlippedY;
@@ -39,6 +50,7 @@ typedef struct {
 	// For WebGL textures; this will not create a textureStorage
 	
 	if( self = [super init] ) {
+		forWebGL = YES;
 		params[kEJTextureParamMinFilter] = GL_LINEAR;
 		params[kEJTextureParamMagFilter] = GL_LINEAR;
 		params[kEJTextureParamWrapS] = GL_REPEAT;
@@ -172,10 +184,98 @@ typedef struct {
 }
 
 - (id)initAsRenderTargetWithWidth:(int)widthp height:(int)heightp fbo:(GLuint)fbop {
-	if( self = [self initWithWidth:widthp height:heightp] ) {
+	// An OpenGL texture attached to a framebuffer
+	if( self = [super init] ) {
+		forWebGL = YES;
+		width = widthp;
+		height = heightp;
+		dimensionsKnown = true;
 		fbo = fbop;
+		[self createWithPixels:NULL format:GL_RGBA];
 	}
 	return self;
+}
+
+- (id)initAsMetalRenderTargetWithWidth:(int)widthp height:(int)heightp {
+	if( self = [super init] ) {
+		width = widthp;
+		height = heightp;
+		dimensionsKnown = true;
+		format = GL_RGBA;
+		isMetalRenderTarget = YES;
+		metalTexture = [EJSharedMetalContext.instance newTextureWithWidth:width height:height
+			format:EJ_METAL_PIXEL_FORMAT usage:MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget
+			storage:MTLStorageModePrivate sampleCount:1];
+	}
+	return self;
+}
+
+- (id)initWithMetalTexture:(id<MTLTexture>)texture {
+	if( self = [super init] ) {
+		width = texture.width;
+		height = texture.height;
+		dimensionsKnown = true;
+		format = GL_RGBA;
+		metalTexture = [texture retain];
+	}
+	return self;
+}
+
+- (id)initAsInteropRenderTargetWithWidth:(int)widthp height:(int)heightp {
+	if( self = [super init] ) {
+		forWebGL = YES;
+		width = widthp;
+		height = heightp;
+		dimensionsKnown = true;
+		format = GL_RGBA;
+		params[kEJTextureParamMinFilter] = GL_LINEAR;
+		params[kEJTextureParamMagFilter] = GL_LINEAR;
+		params[kEJTextureParamWrapS] = GL_CLAMP_TO_EDGE;
+		params[kEJTextureParamWrapT] = GL_CLAMP_TO_EDGE;
+		
+		// The texture cache may bind the new texture; keep WebGL's binding
+		GLint boundTexture = 0;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTexture);
+		
+		NSDictionary *attributes = @{
+			(id)kCVPixelBufferIOSurfacePropertiesKey: @{},
+			(id)kCVPixelBufferOpenGLESCompatibilityKey: @YES,
+			(id)kCVPixelBufferMetalCompatibilityKey: @YES
+		};
+		CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault, MAX(width, 1), MAX(height, 1),
+			kCVPixelFormatType_32BGRA, (CFDictionaryRef)attributes, &interopPixelBuffer);
+		if( result == kCVReturnSuccess ) {
+			result = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+				EJSharedOpenGLContext.instance.textureCache, interopPixelBuffer, NULL,
+				GL_TEXTURE_2D, GL_RGBA, MAX(width, 1), MAX(height, 1), GL_BGRA_EXT, GL_UNSIGNED_BYTE, 0, &interopGLTexture);
+		}
+		if( result == kCVReturnSuccess ) {
+			result = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+				EJSharedMetalContext.instance.textureCache, interopPixelBuffer, NULL,
+				MTLPixelFormatBGRA8Unorm, MAX(width, 1), MAX(height, 1), 0, &interopMetalTexture);
+		}
+		
+		if( result == kCVReturnSuccess ) {
+			textureStorage = [[EJTextureStorage alloc] initWithExistingTexture:CVOpenGLESTextureGetName(interopGLTexture)];
+			[textureStorage bindToTarget:GL_TEXTURE_2D withParams:params];
+			metalTexture = [CVMetalTextureGetTexture(interopMetalTexture) retain];
+		}
+		else {
+			// No shared surface: a plain OpenGL texture; drawing it into a 2D
+			// canvas then reads its pixels back
+			NSLog(@"Warning: Could not share a %dx%d texture between OpenGL and Metal (%d)", width, height, result);
+			[self releaseInterop];
+			[self createWithPixels:NULL format:GL_RGBA];
+		}
+		glBindTexture(GL_TEXTURE_2D, boundTexture);
+	}
+	return self;
+}
+
+- (void)releaseInterop {
+	if( interopMetalTexture ) { CFRelease(interopMetalTexture); interopMetalTexture = NULL; }
+	if( interopGLTexture ) { CFRelease(interopGLTexture); interopGLTexture = NULL; }
+	if( interopPixelBuffer ) { CVPixelBufferRelease(interopPixelBuffer); interopPixelBuffer = NULL; }
 }
 
 - (id)initWithUIImage:(UIImage *)image {
@@ -196,13 +296,20 @@ typedef struct {
 	
 	[fullPath release];
 	[textureStorage release];
+	[metalTexture release];
+	[metalReader release];
+	if( interopPixelBuffer ) {
+		[self releaseInterop];
+		CVOpenGLESTextureCacheFlush(EJSharedOpenGLContext.instance.textureCache, 0);
+	}
 	[super dealloc];
 }
 
 - (void)maybeReleaseStorage {
-	// Releases the texture storage if it can be easily reloaded from
-	// a local file
-	if( lazyLoaded && textureStorage ) {
+	// Releases the OpenGL texture storage if it can be easily reloaded from
+	// a local file or made again from the Metal texture
+	BOOL copyOfMetal = !forWebGL && metalTexture && !isCompressed;
+	if( (lazyLoaded || copyOfMetal) && textureStorage ) {
 	
 		// Make sure this isnt' the currently bound texture
 		GLint boundTexture = 0;
@@ -240,35 +347,97 @@ typedef struct {
 	}
 }
 
-- (NSTimeInterval)lastUsed {
-	return textureStorage.lastBound;
+- (void)maybeReleaseMetalStorage {
+	// Releases the Metal texture of an image that can be reloaded from a file
+	if( lazyLoaded && metalTexture && !isMetalRenderTarget ) {
+		[metalTexture release];
+		metalTexture = nil;
+	}
 }
 
-// When accessing the .textureId, .width or .height we need to
-// ensure that lazyLoaded textures are actually loaded by now.
+- (NSTimeInterval)lastUsed {
+	return MAX(textureStorage.lastBound, metalLastUsed);
+}
 
-#define EJ_ENSURE_LAZY_LOADED_STORAGE() \
-	if( !textureStorage && lazyLoaded ) { \
-		NSMutableData *pixels = [self loadPixelsFromPath:fullPath]; \
-		if( pixels ) { \
-			[self createWithPixels:pixels format:GL_RGBA]; \
-		} \
-	}
-
-- (GLuint)textureId {
-	EJ_ENSURE_LAZY_LOADED_STORAGE();
-	return textureStorage.textureId;
+- (BOOL)isLoaded {
+	return lazyLoaded || metalTexture || textureStorage;
 }
 
 - (BOOL)isDynamic {
-	return !!fbo;
+	return fbo || isMetalRenderTarget || interopPixelBuffer;
+}
+
+// Loads a lazyLoaded texture into whichever API it lives in
+- (void)ensureLoaded {
+	if( lazyLoaded && !textureStorage && !metalTexture ) {
+		NSMutableData *pixels = [self loadPixelsFromPath:fullPath];
+		if( pixels ) {
+			[self createWithPixels:pixels format:GL_RGBA];
+		}
+	}
+}
+
+// The OpenGL texture; for a Metal texture, an OpenGL copy is made first
+- (EJTextureStorage *)glStorage {
+	if( !textureStorage && !forWebGL ) {
+		NSMutableData *pixels = self.pixels;
+		if( pixels ) {
+			[self createGLStorageWithPixels:pixels target:GL_TEXTURE_2D];
+		}
+	}
+	return textureStorage;
+}
+
+- (GLuint)textureId {
+	return self.glStorage.textureId;
+}
+
+- (id<MTLTexture>)metalTexture {
+	metalLastUsed = NSProcessInfo.processInfo.systemUptime;
+	if( metalTexture || interopPixelBuffer ) {
+		return metalTexture;
+	}
+	
+	if( forWebGL ) {
+		// An OpenGL texture without a shared surface: copy its current pixels
+		NSMutableData *pixels = textureStorage ? self.pixels : nil;
+		if( !pixels ) { return nil; }
+		id<MTLTexture> copy = [EJSharedMetalContext.instance newTextureWithWidth:width height:height
+			format:MTLPixelFormatRGBA8Unorm usage:MTLTextureUsageShaderRead storage:MTLStorageModeShared sampleCount:1];
+		[copy replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:pixels.bytes bytesPerRow:width * 4];
+		return [copy autorelease];
+	}
+	
+	if( lazyLoaded ) {
+		NSMutableData *pixels = [self loadPixelsFromPath:fullPath];
+		if( pixels ) {
+			[self createMetalTextureWithPixels:pixels];
+		}
+	}
+	return metalTexture;
+}
+
+- (void)markMetalRead:(id<MTLCommandBuffer>)commandBuffer {
+	if( !interopPixelBuffer || metalReader == commandBuffer ) { return; }
+	[metalReader release];
+	metalReader = [commandBuffer retain];
+}
+
+- (void)waitForMetalReads {
+	if( !metalReader ) { return; }
+	if( metalReader.status < MTLCommandBufferStatusCommitted ) {
+		[EJSharedMetalContext.instance commit];
+	}
+	[metalReader waitUntilCompleted];
+	[metalReader release];
+	metalReader = nil;
 }
 
 - (short)width {
 	if( dimensionsKnown ) {
 		return width;
 	}
-	EJ_ENSURE_LAZY_LOADED_STORAGE();
+	[self ensureLoaded];
 	return width;
 }
 
@@ -276,7 +445,7 @@ typedef struct {
 	if( dimensionsKnown ) {
 		return height;
 	}
-	EJ_ENSURE_LAZY_LOADED_STORAGE();
+	[self ensureLoaded];
 	return height;
 }
 
@@ -291,9 +460,18 @@ typedef struct {
 	copy->isCompressed = isCompressed;
 	
 	if( self.isDynamic && !isCompressed ) {
-		// We want a static copy. So if this texture is used by an FBO, we have to
-		// re-create the texture from pixels again
-		[copy createWithPixels:self.pixels format:format];
+		// We want a static copy of a canvas
+		if( isMetalRenderTarget || interopPixelBuffer ) {
+			id<MTLTexture> source = self.metalTexture;
+			[copy->metalTexture release];
+			copy->metalTexture = source ? [EJSharedMetalContext.instance newCopyOfTexture:source] : nil;
+			[copy->textureStorage release];
+			copy->textureStorage = nil;
+			copy->drawFlippedY = drawFlippedY;
+		}
+		else {
+			[copy createWithPixels:self.pixels format:format];
+		}
 	}
 
 	return copy;
@@ -312,7 +490,15 @@ typedef struct {
 	lazyLoaded = other->lazyLoaded;
 	dimensionsKnown = other->dimensionsKnown;
 	
-	textureStorage = [other->textureStorage retain];
+	if( forWebGL ) {
+		// WebGL needs the OpenGL texture; make it if the other one only has Metal
+		textureStorage = [other.glStorage retain];
+	}
+	else {
+		textureStorage = [other->textureStorage retain];
+		[metalTexture release];
+		metalTexture = [other->metalTexture retain];
+	}
 }
 
 - (void)createWithPixels:(NSData *)pixels format:(GLenum)formatp {
@@ -320,18 +506,94 @@ typedef struct {
 }
 
 - (void)createWithPixels:(NSData *)pixels format:(GLenum)formatp target:(GLenum)target {
-	// Release previous texture if we had one
-	if( textureStorage ) {
-		[textureStorage release];
-		textureStorage = NULL;
-	}
+	format = formatp;
 	
 	// Set the default texture params for Canvas2D
 	params[kEJTextureParamMinFilter] = GL_LINEAR;
 	params[kEJTextureParamMagFilter] = GL_LINEAR;
 	params[kEJTextureParamWrapS] = GL_CLAMP_TO_EDGE;
 	params[kEJTextureParamWrapT] = GL_CLAMP_TO_EDGE;
+	
+	if( forWebGL || target != GL_TEXTURE_2D ) {
+		[self createGLStorageWithPixels:pixels target:target];
+	}
+	else {
+		[self createMetalTextureWithPixels:pixels];
+	}
+}
 
+- (void)createMetalTextureWithPixels:(NSData *)pixels {
+	[metalTexture release];
+	metalTexture = nil;
+	
+	EJSharedMetalContext *metal = EJSharedMetalContext.instance;
+	int maxTextureSize = [metal.device supportsFamily:MTLGPUFamilyApple3] ? 16384 : 8192;
+	if( width > maxTextureSize || height > maxTextureSize ) {
+		NSLog(@"Warning: Image %@ larger than the maximum texture size (%d)", fullPath ? fullPath : @"[Dynamic]", maxTextureSize);
+		return;
+	}
+	
+	if( isCompressed ) {
+		[self uploadCompressedMetalPixels:pixels];
+		return;
+	}
+	
+	BOOL alpha = (format == GL_ALPHA);
+	int bytesPerPixel = alpha ? 1 : 4;
+	metalTexture = [metal newTextureWithWidth:width height:height
+		format:(alpha ? MTLPixelFormatA8Unorm : MTLPixelFormatRGBA8Unorm)
+		usage:MTLTextureUsageShaderRead storage:MTLStorageModeShared sampleCount:1];
+	
+	// Empty textures (font atlases) start out transparent
+	NSData *bytes = pixels ? pixels : [NSMutableData dataWithLength:MAX(width, 1) * MAX(height, 1) * bytesPerPixel];
+	if( width > 0 && height > 0 ) {
+		[metalTexture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
+			withBytes:bytes.bytes bytesPerRow:width * bytesPerPixel];
+	}
+}
+
+- (void)uploadCompressedMetalPixels:(NSData *)pixels {
+	PVRTextureHeader *header = (PVRTextureHeader *)pixels.bytes;
+	uint32_t formatFlags = header->flags & PVR_TEXTURE_FLAG_TYPE_MASK;
+	uint32_t bpp = (formatFlags == kPVRTextureFlagTypePVRTC_4) ? 4 : 2;
+	if( formatFlags != kPVRTextureFlagTypePVRTC_4 && formatFlags != kPVRTextureFlagTypePVRTC_2 ) {
+		NSLog(@"Warning: PVRTC Compressed Image %@ neither 2 nor 4 bits per pixel", fullPath);
+		return;
+	}
+	
+	MTLTextureDescriptor *td = [MTLTextureDescriptor
+		texture2DDescriptorWithPixelFormat:(bpp == 4 ? MTLPixelFormatPVRTC_RGBA_4BPP : MTLPixelFormatPVRTC_RGBA_2BPP)
+		width:width height:height mipmapped:NO];
+	td.mipmapLevelCount = header->numMipmaps + 1;
+	metalTexture = [EJSharedMetalContext.instance.device newTextureWithDescriptor:td];
+	if( !metalTexture ) {
+		NSLog(@"Warning: PVRTC textures are not supported on this device (%@)", fullPath);
+		return;
+	}
+	
+	uint8_t *bytes = ((uint8_t *)pixels.bytes) + header->headerLength;
+	int mipWidth = width, mipHeight = height;
+	for( int mip = 0; mip < header->numMipmaps+1; mip++ ) {
+		uint32_t widthBlocks = MAX(mipWidth / (16/bpp), 2);
+		uint32_t heightBlocks = MAX(mipHeight / 4, 2);
+		uint32_t size = widthBlocks * heightBlocks * 8;
+		
+		[metalTexture replaceRegion:MTLRegionMake2D(0, 0, mipWidth, mipHeight) mipmapLevel:mip
+			withBytes:bytes bytesPerRow:0];
+		bytes += size;
+		
+		mipWidth = MAX(mipWidth >> 1, 1);
+		mipHeight = MAX(mipHeight >> 1, 1);
+	}
+}
+
+- (void)createGLStorageWithPixels:(NSData *)pixels target:(GLenum)target {
+	// Release previous texture if we had one
+	if( textureStorage ) {
+		[textureStorage release];
+		textureStorage = NULL;
+	}
+	
 	GLint maxTextureSize;
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
 	
@@ -339,7 +601,6 @@ typedef struct {
 		NSLog(@"Warning: Image %@ larger than MAX_TEXTURE_SIZE (%d)", fullPath ? fullPath : @"[Dynamic]", maxTextureSize);
 		return;
 	}
-	format = formatp;
 	
 	GLint boundTexture = 0;
 	GLenum bindingName = (target == GL_TEXTURE_2D)
@@ -409,7 +670,16 @@ typedef struct {
 	}
 }
 
-- (void)updateWithPixels:(NSData *)pixels atX:(int)sx y:(int)sy width:(int)sw height:(int)sh {	
+- (void)updateWithPixels:(NSData *)pixels atX:(int)sx y:(int)sy width:(int)sw height:(int)sh {
+	if( metalTexture && !forWebGL ) {
+		// Only ever writes parts not drawn yet (new font glyphs), so drawing
+		// already queued with this texture is not affected
+		int bytesPerPixel = (format == GL_ALPHA) ? 1 : 4;
+		[metalTexture replaceRegion:MTLRegionMake2D(sx, sy, sw, sh) mipmapLevel:0
+			withBytes:pixels.bytes bytesPerRow:sw * bytesPerPixel];
+		return;
+	}
+	
 	int boundTexture = 0;
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTexture);
 	
@@ -420,7 +690,19 @@ typedef struct {
 }
 
 - (NSMutableData *)pixels {
-	EJ_ENSURE_LAZY_LOADED_STORAGE();
+	if( !forWebGL ) {
+		// Metal textures: compressed images come from their file, everything
+		// else from the GPU, or from the file if it isn't loaded yet
+		if( lazyLoaded && (isCompressed || !metalTexture) ) {
+			return [self loadPixelsFromPath:fullPath];
+		}
+		if( metalTexture && !isCompressed ) {
+			return [EJSharedMetalContext.instance readPixelsFromTexture:metalTexture x:0 y:0 width:width height:height];
+		}
+		if( !textureStorage ) {
+			return nil;
+		}
+	}
 	
 	GLint boundFrameBuffer;
 	GLuint tempFramebuffer;
@@ -545,8 +827,7 @@ typedef struct {
 }
 
 - (void)bindToTarget:(GLenum)target {
-	EJ_ENSURE_LAZY_LOADED_STORAGE();
-	[textureStorage bindToTarget:target withParams:params];
+	[self.glStorage bindToTarget:target withParams:params];
 }
 
 - (UIImage *)image {

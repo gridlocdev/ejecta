@@ -1,6 +1,9 @@
 // Canvas 2D renderer tests: everything the 2D context draws with, checked by
 // reading pixels back. They pin down what the renderer must do, whichever
-// graphics API is underneath. Loaded by index.js.
+// graphics API is underneath. Loaded by index.js; scoped so its helpers
+// do not clash with globals LittleJS declares later (RED, GREEN, ...).
+
+(function() {
 
 function canvas2d( w, h, options ) {
 	var canvas = document.createElement('canvas');
@@ -22,7 +25,7 @@ function loadImage( src ) {
 var RED = [255, 0, 0, 255], GREEN = [0, 255, 0, 255], BLUE = [0, 0, 255, 255],
 	WHITE = [255, 255, 255, 255], CLEAR = [0, 0, 0, 0];
 
-async function canvas2dTests() {
+window.canvas2dTests = async function canvas2dTests() {
 	var ctx, a, b, c, d;
 
 	// Paths: two overlapping squares drawn the same way round. Non-zero fills
@@ -317,7 +320,7 @@ async function canvas2dTests() {
 }
 
 // The screen canvas: drawn, presented for a few frames, then read back
-async function screenCanvasTests() {
+window.screenCanvasTests = async function screenCanvasTests() {
 	var ctx = window.canvas.getContext('2d');
 	var w = window.canvas.width, h = window.canvas.height;
 	ctx.fillStyle = '#00ff00';
@@ -332,3 +335,5 @@ async function screenCanvasTests() {
 	a = pixel(copy, 5, 5);
 	check('screen canvas drawn into canvas', same(a, RED), a);
 }
+
+})();

@@ -3,11 +3,6 @@
 
 @implementation EJCanvasContext2DTexture
 
-- (void)dealloc {
-	[texture release];
-	[super dealloc];
-}
-
 - (void)resizeToWidth:(short)newWidth height:(short)newHeight {
 	[self flushBuffers];
 	
@@ -15,50 +10,35 @@
 	bufferHeight = height = newHeight;
 	
 	NSLog(
-		@"Creating Offscreen Canvas (2D): "
+		@"Creating Offscreen Canvas (2D, Metal): "
 			@"size: %dx%d, "
 			@"antialias: %@",
 		width, height,
 		(msaaEnabled ? [NSString stringWithFormat:@"yes (%d samples)", msaaSamples] : @"no")
 	);
 	
-	// Release previous texture if any, create the new texture and set it as
-	// the rendering target for this framebuffer
+	// Drawing already queued keeps the previous texture alive until it's done
+	[metal endEncoderIfOwner:self];
 	[texture release];
-	texture = [[EJTexture alloc] initAsRenderTargetWithWidth:newWidth height:newHeight
-		fbo:viewFrameBuffer];
-	
-	glBindFramebuffer(GL_FRAMEBUFFER, viewFrameBuffer);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture.textureId, 0);
+	texture = [[EJTexture alloc] initAsMetalRenderTargetWithWidth:newWidth height:newHeight];
 	
 	[self resetFramebuffer];
 }
 
 - (EJTexture *)texture {
-	// If this texture Canvas uses MSAA, we need to resolve the MSAA first,
-	// before we can use the texture for drawing.
-	if( msaaEnabled && needsPresenting ) {
-		GLint boundFrameBuffer;
-		glGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFrameBuffer );
-		
-		//Bind the MSAA and View frameBuffers and resolve
-		glBindFramebuffer(GL_READ_FRAMEBUFFER_APPLE, msaaFrameBuffer);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER_APPLE, viewFrameBuffer);
-		glResolveMultisampleFramebufferAPPLE();
-		
-		glBindFramebuffer(GL_FRAMEBUFFER, boundFrameBuffer);
-		needsPresenting = NO;
-	}
-	
-	// Special case where this canvas is drawn into itself - we have to use glReadPixels to get a texture
+	// Drawn into itself: a copy of the pixels as they are now
 	if( scriptView.currentRenderingContext == self ) {
-		return [self getImageDataSx:0 sy:0 sw:width sh:height].texture;
+		[self endRenderPass];
+		id<MTLTexture> copy = [metal newCopyOfTexture:texture.metalTexture];
+		EJTexture *snapshot = [[[EJTexture alloc] initWithMetalTexture:copy] autorelease];
+		[copy release];
+		return snapshot;
 	}
 	
-	// Just use the framebuffer texture directly
-	else {
-		return texture;
-	}
+	// Drawn into another canvas: the texture directly. Metal runs the
+	// drawing in order, so everything drawn so far shows.
+	[self endRenderPass];
+	return texture;
 }
 
 @end

@@ -336,20 +336,19 @@ typedef std::vector<subpath_t> path_t;
 	
 	
 	// Disable drawing to the color buffer, enable the stencil buffer
-	glDisableVertexAttribArray(kEJGLProgram2DAttributeUV);
-	glDisableVertexAttribArray(kEJGLProgram2DAttributeColor);
-	
-	glDisable(GL_BLEND);
-	glEnable(GL_STENCIL_TEST);
-	glStencilMask(0xff);
-	
-	glStencilFunc(GL_ALWAYS, 0, 0xff);
-	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	EJ2DDepthStencil ds = context.depthStencil;
+	ds.stencilTest = YES;
+	ds.stencilWriteMask = 0xff;
+	ds.stencilReadMask = 0xff;
+	ds.stencilCompare = MTLCompareFunctionAlways;
+	ds.stencilRef = 0;
+	context.colorWrite = NO;
 	
 	
 	// Clear the needed area in the stencil buffer
 	
-	glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+	EJ2DDepthStencilSetOps(&ds, MTLStencilOperationZero, MTLStencilOperationZero, MTLStencilOperationZero);
+	context.depthStencil = ds;
 	[context
 		pushRectX:minPos.x y:minPos.y w:maxPos.x-minPos.x h:maxPos.y-minPos.y
 		color:white withTransform:CGAffineTransformIdentity];
@@ -357,51 +356,35 @@ typedef std::vector<subpath_t> path_t;
 	
 	
 	if( fillRule == kEJPathFillRuleNonZero ) {
-		// If we use the Non-Zero fill rule, draw to the stencil buffer twice
-		// for each sub path:
-		// 1) for all back-facing polygons, increase the stencil value
-		// 2) for all front-facing polygons, decrease the stencil value
-		
-		// We need to enable face culling for this and alternate the stencil
-		// ops in the draw loop.
-		glEnable(GL_CULL_FACE);
+		// For the Non-Zero fill rule, front-facing triangles increase the
+		// stencil value and back-facing ones decrease it
+		ds.frontFail = MTLStencilOperationIncrementWrap;
+		ds.frontDepthFail = MTLStencilOperationKeep;
+		ds.frontPass = MTLStencilOperationIncrementWrap;
+		ds.backFail = MTLStencilOperationDecrementWrap;
+		ds.backDepthFail = MTLStencilOperationKeep;
+		ds.backPass = MTLStencilOperationDecrementWrap;
 	}
 	else if( fillRule == kEJPathFillRuleEvenOdd ) {
 		// For the Even-Odd fill rule, simply invert the stencil buffer with
-		// each overdraw/
-		glStencilOp(GL_KEEP, GL_KEEP, GL_INVERT);
+		// each overdraw
+		EJ2DDepthStencilSetOps(&ds, MTLStencilOperationKeep, MTLStencilOperationKeep, MTLStencilOperationInvert);
 	}
+	context.depthStencil = ds;
 	
+	// Each subpath as a fan of triangles around its first point
 	for( path_t::iterator sp = paths.begin(); ; ++sp ) {
 		subpath_t &path = sp==paths.end()?currentPath:*sp;
-		if( path.points.size() < 3 ) {
-			if( sp==paths.end() ) break;
-			continue;
-		}
-		
-		glVertexAttribPointer(kEJGLProgram2DAttributePos, 2, GL_FLOAT, GL_FALSE, 0, &(path.points).front());
-		
-		if( fillRule == kEJPathFillRuleNonZero ) {
-			glCullFace(GL_BACK);
-			glStencilOp(GL_INCR_WRAP, GL_KEEP, GL_INCR_WRAP);
-			glDrawArrays(GL_TRIANGLE_FAN, 0, (int)path.points.size());
-		
-			glCullFace(GL_FRONT);
-			glStencilOp(GL_DECR_WRAP, GL_KEEP, GL_DECR_WRAP);
-			glDrawArrays(GL_TRIANGLE_FAN, 0, (int)path.points.size());
-		}
-		else if( fillRule == kEJPathFillRuleEvenOdd ) {
-			glDrawArrays(GL_TRIANGLE_FAN, 0, (int)path.points.size());
+		size_t count = path.points.size();
+		for( size_t i = 1; i + 1 < count; i++ ) {
+			EJVector2 a = path.points[0], b = path.points[i], c = path.points[i+1];
+			[context pushTriX1:a.x y1:a.y x2:b.x y2:b.y x3:c.x y3:c.y
+				color:white withTransform:CGAffineTransformIdentity];
 		}
 		
 		if(sp==paths.end()) break;
 	}
-	
-	if( fillRule == kEJPathFillRuleNonZero ) {
-		glDisable(GL_CULL_FACE);
-	}
-	
-	[context bindVertexBuffer];
+	[context flushBuffers];
 	
 	
 	// Enable drawing to the color or depth buffer and push a rect with the correct
@@ -409,17 +392,19 @@ typedef std::vector<subpath_t> path_t;
 	// again.
 	
 	if( target == kEJPathPolygonTargetDepth ) {
-		glDepthFunc(GL_ALWAYS);
-		glDepthMask(GL_TRUE);
-		glClear(GL_DEPTH_BUFFER_BIT);
+		[context clearDepth];
+		ds.depthCompare = MTLCompareFunctionAlways;
+		ds.depthWrite = YES;
 	}
 	else if( target == kEJPathPolygonTargetColor ) {
-		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-		glEnable(GL_BLEND);
+		context.colorWrite = YES;
 	}
 	
-	glStencilFunc(GL_NOTEQUAL, 0x00, 0xff);
-	glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+	ds.stencilCompare = MTLCompareFunctionNotEqual;
+	ds.stencilRef = 0;
+	ds.stencilReadMask = 0xff;
+	EJ2DDepthStencilSetOps(&ds, MTLStencilOperationZero, MTLStencilOperationZero, MTLStencilOperationZero);
+	context.depthStencil = ds;
 
 	if( state->fillObject && target == kEJPathPolygonTargetColor ) {
 		// If we have a fill pattern or gradient, we have to do some extra work to unproject the
@@ -447,15 +432,16 @@ typedef std::vector<subpath_t> path_t;
 	}
 	
 	[context flushBuffers];
-	glDisable(GL_STENCIL_TEST);
+	ds = context.depthStencil;
+	ds.stencilTest = NO;
 	
 	if( target == kEJPathPolygonTargetDepth ) {
-		glDepthMask(GL_FALSE);
-		glDepthFunc(GL_EQUAL);
-		
-		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-		glEnable(GL_BLEND);
+		// From now on, only draw where the clip path set the depth
+		ds.depthWrite = NO;
+		ds.depthCompare = MTLCompareFunctionEqual;
+		context.colorWrite = YES;
 	}
+	context.depthStencil = ds;
 }
 
 - (void)drawArcToContext:(EJCanvasContext2D *)context atPoint:(EJVector2)point v1:(EJVector2)p1 v2:(EJVector2)p2 color:(EJColorRGBA)color {
@@ -581,17 +567,19 @@ typedef std::vector<subpath_t> path_t;
 		[context createStencilBufferOnce];
 		stencilMask = context.stencilMask;
 		
-		glEnable(GL_STENCIL_TEST);
-		
-		glStencilMask(stencilMask);
-		
-		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-		glStencilFunc(GL_NOTEQUAL, stencilMask, stencilMask);
+		EJ2DDepthStencil ds = context.depthStencil;
+		ds.stencilTest = YES;
+		ds.stencilWriteMask = stencilMask;
+		EJ2DDepthStencilSetOps(&ds, MTLStencilOperationKeep, MTLStencilOperationKeep, MTLStencilOperationReplace);
+		ds.stencilCompare = MTLCompareFunctionNotEqual;
+		ds.stencilRef = stencilMask;
+		ds.stencilReadMask = stencilMask;
+		context.depthStencil = ds;
 		
 		// If we have a stroke object, we also have to disable drawing to the color buffer,
 		// so we can later fill the stencil mask with the pattern or gradient
 		if( fillStencil ) {
-			glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+			context.colorWrite = NO;
 		}
 	}
 	
@@ -844,8 +832,10 @@ typedef std::vector<subpath_t> path_t;
 	
 		if( fillStencil ) {
 			// Fill the stencil mask with the strokeObject
-			glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-			glStencilFunc(GL_EQUAL, stencilMask, stencilMask);
+			context.colorWrite = YES;
+			EJ2DDepthStencil ds = context.depthStencil;
+			ds.stencilCompare = MTLCompareFunctionEqual;
+			context.depthStencil = ds;
 			
 			// Add a bit of padding to the fill rect, so all line caps are included
 			float padding = width2 * M_SQRT2;
@@ -858,14 +848,14 @@ typedef std::vector<subpath_t> path_t;
 			[context flushBuffers];
 		}
 		
-		glDisable(GL_STENCIL_TEST);
+		EJ2DDepthStencil ds = context.depthStencil;
+		ds.stencilTest = NO;
+		ds.stencilWriteMask = 0xff;
+		context.depthStencil = ds;
 		
 		if( stencilMask == (1<<7) ) {
 			context.stencilMask = (1<<0);
-			
-			glStencilMask(0xff);
-			glClearStencil(0x0);
-			glClear(GL_STENCIL_BUFFER_BIT);
+			[context clearStencil];
 		}
 		else {
 			context.stencilMask = (stencilMask << 1);

@@ -8,34 +8,33 @@
 @implementation EJCanvasContext2D
 
 const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
-	[kEJCompositeOperationSourceOver] = {GL_ONE, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationLighter] = {GL_ONE, GL_ONE_MINUS_SRC_ALPHA, 0},
-	[kEJCompositeOperationLighten] = {GL_ONE, GL_ONE_MINUS_SRC_ALPHA, 0},
-	[kEJCompositeOperationDarker] = {GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationDarken] = {GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationDestinationOut] = {GL_ZERO, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationDestinationOver] = {GL_ONE_MINUS_DST_ALPHA, GL_ONE, 1},
-	[kEJCompositeOperationSourceAtop] = {GL_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationXOR] = {GL_ONE_MINUS_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 1},
-	[kEJCompositeOperationCopy] = {GL_ONE, GL_ZERO, 1},
-	[kEJCompositeOperationSourceIn] = {GL_DST_ALPHA, GL_ZERO, 1},
-	[kEJCompositeOperationDestinationIn] = {GL_ZERO, GL_SRC_ALPHA, 1},
-	[kEJCompositeOperationSourceOut] = {GL_ONE_MINUS_DST_ALPHA, GL_ZERO, 1},
-	[kEJCompositeOperationDestinationAtop] = {GL_ONE_MINUS_DST_ALPHA, GL_SRC_ALPHA, 1}
+	[kEJCompositeOperationSourceOver] = {MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationLighter] = {MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha, 0},
+	[kEJCompositeOperationLighten] = {MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha, 0},
+	[kEJCompositeOperationDarker] = {MTLBlendFactorDestinationColor, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationDarken] = {MTLBlendFactorDestinationColor, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationDestinationOut] = {MTLBlendFactorZero, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationDestinationOver] = {MTLBlendFactorOneMinusDestinationAlpha, MTLBlendFactorOne, 1},
+	[kEJCompositeOperationSourceAtop] = {MTLBlendFactorDestinationAlpha, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationXOR] = {MTLBlendFactorOneMinusDestinationAlpha, MTLBlendFactorOneMinusSourceAlpha, 1},
+	[kEJCompositeOperationCopy] = {MTLBlendFactorOne, MTLBlendFactorZero, 1},
+	[kEJCompositeOperationSourceIn] = {MTLBlendFactorDestinationAlpha, MTLBlendFactorZero, 1},
+	[kEJCompositeOperationDestinationIn] = {MTLBlendFactorZero, MTLBlendFactorSourceAlpha, 1},
+	[kEJCompositeOperationSourceOut] = {MTLBlendFactorOneMinusDestinationAlpha, MTLBlendFactorZero, 1},
+	[kEJCompositeOperationDestinationAtop] = {MTLBlendFactorOneMinusDestinationAlpha, MTLBlendFactorSourceAlpha, 1}
 };
 
 
 @synthesize state;
-@synthesize imageSmoothingEnabled;
 @synthesize stencilMask;
+@synthesize texture;
 
 - (id)initWithScriptView:(EJJavaScriptView *)scriptViewp width:(short)widthp height:(short)heightp {
 	if( self = [super init] ) {
 		scriptView = scriptViewp;
-		sharedGLContext = scriptView.openGLContext;
-		glContext = sharedGLContext.glContext2D;
-		vertexBuffer = (EJVertex *)(sharedGLContext.vertexBuffer.mutableBytes);
-		vertexBufferSize = (int)(sharedGLContext.vertexBuffer.length / sizeof(EJVertex));
+		metal = [EJSharedMetalContext.instance retain];
+		vertexBufferSize = EJ_CANVAS_VERTEX_BUFFER_SIZE;
+		vertexBuffer = (EJVertex *)malloc(vertexBufferSize * sizeof(EJVertex));
 	
 		memset(stateStack, 0, sizeof(stateStack));
 		stateIndex = 0;
@@ -59,7 +58,11 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 		
 		fontCache = [[EJFontCache instance] retain];
 		
-		textureFilter = GL_LINEAR;
+		depthStencil = EJ2DDepthStencilDefault();
+		colorWrite = YES;
+		blendOperation = kEJCompositeOperationSourceOver;
+		currentProgram = kEJ2DProgramFlat;
+		nearestFilter = NO;
 		msaaEnabled = NO;
 		msaaSamples = 2;
 		preserveDrawingBuffer = YES;
@@ -69,10 +72,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)dealloc {
-	// Make sure this rendering context is the current one, so all
-	// OpenGL objects can be deleted properly.
-	EAGLContext *oldContext = EAGLContext.currentContext;
-	[EAGLContext setCurrentContext:glContext];
+	[metal endEncoderIfOwner:self];
 	
 	[fontCache release];
 	
@@ -84,41 +84,28 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 		[stateStack[i].strokeObject release];
 	}
 	
-	if( viewFrameBuffer ) { glDeleteFramebuffers( 1, &viewFrameBuffer); }
-	if( viewRenderBuffer ) { glDeleteRenderbuffers(1, &viewRenderBuffer); }
-	if( msaaFrameBuffer ) {	glDeleteFramebuffers( 1, &msaaFrameBuffer); }
-	if( msaaRenderBuffer ) { glDeleteRenderbuffers(1, &msaaRenderBuffer); }
-	if( stencilBuffer ) { glDeleteRenderbuffers(1, &stencilBuffer); }
+	[currentTexture release];
+	[texture release];
+	[msaaTexture release];
+	[depthStencilTexture release];
+	free(vertexBuffer);
 	
 	[path release];
-	[EAGLContext setCurrentContext:oldContext];
-	
+	[metal release];
 	[super dealloc];
 }
 
 - (void)create {
-	if( msaaEnabled ) {
-		glGenFramebuffers(1, &msaaFrameBuffer);
-		glGenRenderbuffers(1, &msaaRenderBuffer);
+	if( msaaEnabled && metal.maxSamples < 2 ) {
+		NSLog(@"Warning: This device can't keep multisampled pixels between frames; antialias is off");
+		msaaEnabled = NO;
 	}
-	
-	glGenFramebuffers(1, &viewFrameBuffer);
-	glBindFramebuffer(GL_FRAMEBUFFER, viewFrameBuffer);
-	
-	glGenRenderbuffers(1, &viewRenderBuffer);
-	glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
-	
-	glDisable(GL_CULL_FACE);
-	glDisable(GL_DITHER);
-	
-	glEnable(GL_BLEND);
-	glDepthFunc(GL_ALWAYS);
-	
+	msaaSamples = MIN(msaaSamples, metal.maxSamples);
 	[self resizeToWidth:width height:height];
 }
 
 - (void)resizeToWidth:(short)newWidth height:(short)newHeight {
-	// This function is a stub - Overwritten in both subclasses
+	// Overwritten in both subclasses, which make the texture to draw into
 	width = newWidth;
 	height = newHeight;
 	
@@ -129,100 +116,132 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)resetFramebuffer {
-	// Delete stencil buffer if present; it will be re-created when needed
-	if( stencilBuffer ) {
-		glDeleteRenderbuffers(1, &stencilBuffer);
-		stencilBuffer = 0;
-	}
+	// The previous textures may still be drawn into; end that render pass
+	[metal endEncoderIfOwner:self];
 	
-	// Resize the MSAA buffer
-	if( msaaEnabled && msaaFrameBuffer && msaaRenderBuffer ) {
-		glBindFramebuffer(GL_FRAMEBUFFER, msaaFrameBuffer);
-		glBindRenderbuffer(GL_RENDERBUFFER, msaaRenderBuffer);
-		
-		glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, msaaSamples, GL_RGBA8_OES, bufferWidth, bufferHeight);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msaaRenderBuffer);
-	}
+	// The depth-stencil texture is made again when needed
+	[depthStencilTexture release];
+	depthStencilTexture = nil;
+	depthStencil = EJ2DDepthStencilDefault();
 	
-	[self prepare];
+	[msaaTexture release];
+	msaaTexture = nil;
+	if( msaaEnabled ) {
+		msaaTexture = [metal newTextureWithWidth:bufferWidth height:bufferHeight format:EJ_METAL_PIXEL_FORMAT
+			usage:MTLTextureUsageRenderTarget storage:MTLStorageModePrivate sampleCount:msaaSamples];
+	}
 	
 	// Clear to transparent
-	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
-	
+	clearColorPending = YES;
 	needsPresenting = YES;
 }
 
 - (void)createStencilBufferOnce {
-	if( stencilBuffer ) { return; }
+	if( depthStencilTexture ) { return; }
 	
-	glGenRenderbuffers(1, &stencilBuffer);
-	glBindRenderbuffer(GL_RENDERBUFFER, stencilBuffer);
-	if( msaaEnabled ) {
-		glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, msaaSamples, GL_DEPTH24_STENCIL8_OES, bufferWidth, bufferHeight);
-	}
-	else {
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8_OES, bufferWidth, bufferHeight);
-	}
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, stencilBuffer);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, stencilBuffer);
-	
-	glBindRenderbuffer(GL_RENDERBUFFER, msaaEnabled ? msaaRenderBuffer : viewRenderBuffer );
-	
-	glClear(GL_STENCIL_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glEnable(GL_DEPTH_TEST);
-}
-
-- (void)bindVertexBuffer {	
-	glEnableVertexAttribArray(kEJGLProgram2DAttributePos);
-	glVertexAttribPointer(kEJGLProgram2DAttributePos, 2, GL_FLOAT, GL_FALSE,
-		sizeof(EJVertex), (char *)vertexBuffer + offsetof(EJVertex, pos));
-	
-	glEnableVertexAttribArray(kEJGLProgram2DAttributeUV);
-	glVertexAttribPointer(kEJGLProgram2DAttributeUV, 2, GL_FLOAT, GL_FALSE,
-		sizeof(EJVertex), (char *)vertexBuffer + offsetof(EJVertex, uv));
-
-	glEnableVertexAttribArray(kEJGLProgram2DAttributeColor);
-	glVertexAttribPointer(kEJGLProgram2DAttributeColor, 4, GL_UNSIGNED_BYTE, GL_TRUE,
-		sizeof(EJVertex), (char *)vertexBuffer + offsetof(EJVertex, color));
+	// Adding an attachment needs a new render pass
+	[self endRenderPass];
+	depthStencilTexture = [metal newTextureWithWidth:bufferWidth height:bufferHeight format:EJ_METAL_DEPTH_STENCIL_FORMAT
+		usage:MTLTextureUsageRenderTarget storage:MTLStorageModePrivate sampleCount:(msaaEnabled ? msaaSamples : 1)];
+	clearDepthPending = YES;
+	clearStencilPending = YES;
 }
 
 - (void)prepare {
-	// Bind the frameBuffer and vertexBuffer array
-	glBindFramebuffer(GL_FRAMEBUFFER, msaaEnabled ? msaaFrameBuffer : viewFrameBuffer );
-	glBindRenderbuffer(GL_RENDERBUFFER, msaaEnabled ? msaaRenderBuffer : viewRenderBuffer );
+	// Called when this context becomes the current one. The render pass is
+	// opened when something is drawn; drawing sets needsPresenting.
+}
+
+- (id<MTLRenderCommandEncoder>)encoder {
+	if( encoder ) { return encoder; }
 	
-	glViewport(0, 0, bufferWidth, bufferHeight);
+	id<MTLTexture> target = texture.metalTexture;
+	if( !target ) { return nil; }
 	
-	EJCompositeOperation op = state->globalCompositeOperation;
-	glBlendFunc( EJCompositeOperationFuncs[op].source, EJCompositeOperationFuncs[op].destination );
-	currentTexture = nil;
-	currentProgram = nil;
-	
-	[self bindVertexBuffer];
-	
-	if( stencilBuffer ) {
-		glEnable(GL_DEPTH_TEST);
+	MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+	MTLRenderPassColorAttachmentDescriptor *color = pass.colorAttachments[0];
+	color.texture = msaaTexture ? msaaTexture : target;
+	color.loadAction = clearColorPending ? MTLLoadActionClear : MTLLoadActionLoad;
+	color.clearColor = MTLClearColorMake(0, 0, 0, 0);
+	if( msaaTexture ) {
+		color.resolveTexture = target;
+		color.storeAction = MTLStoreActionStoreAndMultisampleResolve;
 	}
 	else {
-		glDisable(GL_DEPTH_TEST);
+		color.storeAction = MTLStoreActionStore;
 	}
 	
-	if( state->clipPath ) {
-		glDepthFunc(GL_EQUAL);
+	if( depthStencilTexture ) {
+		pass.depthAttachment.texture = depthStencilTexture;
+		pass.depthAttachment.loadAction = clearDepthPending ? MTLLoadActionClear : MTLLoadActionLoad;
+		pass.depthAttachment.clearDepth = 1.0;
+		pass.depthAttachment.storeAction = MTLStoreActionStore;
+		pass.stencilAttachment.texture = depthStencilTexture;
+		pass.stencilAttachment.loadAction = clearStencilPending ? MTLLoadActionClear : MTLLoadActionLoad;
+		pass.stencilAttachment.clearStencil = 0;
+		pass.stencilAttachment.storeAction = MTLStoreActionStore;
 	}
-	else {
-		glDepthFunc(GL_ALWAYS);
-	}
+	clearColorPending = clearDepthPending = clearStencilPending = NO;
 	
-	needsPresenting = YES;
+	encoder = [[metal renderEncoderWithDescriptor:pass owner:self] retain];
+	boundPipeline = nil;
+	return encoder;
+}
+
+- (void)metalEncoderDidEnd {
+	[encoder release];
+	encoder = nil;
+	boundPipeline = nil;
+}
+
+- (void)endRenderPass {
+	[self flushBuffers];
+	
+	// Clears not done yet are done now, by opening a pass
+	if( clearColorPending || clearDepthPending || clearStencilPending ) {
+		[self encoder];
+	}
+	[metal endEncoderIfOwner:self];
+}
+
+- (void)clearDepth {
+	// The depth values set on clip() are 0; cleared means 1
+	[self flushBuffers];
+	[metal endEncoderIfOwner:self];
+	clearDepthPending = YES;
+}
+
+- (void)clearStencil {
+	[self flushBuffers];
+	[metal endEncoderIfOwner:self];
+	clearStencilPending = YES;
+}
+
+- (EJ2DDepthStencil)depthStencil {
+	return depthStencil;
+}
+
+- (void)setDepthStencil:(EJ2DDepthStencil)newDepthStencil {
+	[self flushBuffers];
+	depthStencil = newDepthStencil;
+}
+
+- (BOOL)colorWrite {
+	return colorWrite;
+}
+
+- (void)setColorWrite:(BOOL)write {
+	[self flushBuffers];
+	colorWrite = write;
 }
 
 - (void)setWidth:(short)newWidth {
 	if( newWidth == width ) {
 		// Same width as before? Just clear the canvas, as per the spec
 		[self flushBuffers];
-		glClear(GL_COLOR_BUFFER_BIT);
+		[metal endEncoderIfOwner:self];
+		clearColorPending = YES;
+		needsPresenting = YES;
 		return;
 	}
 	[self resizeToWidth:newWidth height:height];
@@ -232,7 +251,9 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	if( newHeight == height ) {
 		// Same height as before? Just clear the canvas, as per the spec
 		[self flushBuffers];
-		glClear(GL_COLOR_BUFFER_BIT);
+		[metal endEncoderIfOwner:self];
+		clearColorPending = YES;
+		needsPresenting = YES;
 		return;
 	}
 	[self resizeToWidth:width height:newHeight];
@@ -243,18 +264,15 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	
 	[self flushBuffers];
 	
-	currentTexture = newTexture;
-	[currentTexture bindWithFilter:textureFilter];
+	[currentTexture release];
+	currentTexture = [newTexture retain];
 }
 
-- (void)setProgram:(EJGLProgram2D *)newProgram {
+- (void)setProgram:(EJ2DProgram)newProgram {
 	if( currentProgram == newProgram ) { return; }
 	
 	[self flushBuffers];
 	currentProgram = newProgram;
-	
-	glUseProgram(currentProgram.program);
-	glUniform2f(currentProgram.screen, width, height * (upsideDown ? -1 : 1));
 }
 
 - (void)pushTriX1:(float)x1 y1:(float)y1 x2:(float)x2 y2:(float)y2
@@ -393,7 +411,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 			t12 = {a21.x + a12.x, a21.y + a12.y},
 			t22 = {a21.x + a22.x, a21.y + a22.y};
 		
-		[self setProgram:sharedGLContext.programTexture];
+		[self setProgram:kEJ2DProgramTexture];
 		[self setTexture:gradient.texture];
 		if( vertexBufferIndex >= vertexBufferSize - 6 ) {
 			[self flushBuffers];
@@ -426,14 +444,14 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	
 	else if( gradient.type == kEJCanvasGradientTypeRadial ) {
 		[self flushBuffers];
-				
-		EJGLProgram2DRadialGradient *gradientProgram = sharedGLContext.programRadialGradient;
-		[self setProgram:gradientProgram];
+		[self setProgram:kEJ2DProgramRadialGradient];
 		
-		glUniform3f(gradientProgram.inner, gradient.p1.x, gradient.p1.y, gradient.r1);
 		EJVector2 dp = EJVector2Sub(gradient.p2, gradient.p1);
-		float dr = gradient.r2 - gradient.r1;
-		glUniform3f(gradientProgram.diff, dp.x, dp.y, dr);
+		float uniforms[8] = {
+			gradient.p1.x, gradient.p1.y, gradient.r1, 0,
+			dp.x, dp.y, gradient.r2 - gradient.r1, 0
+		};
+		memcpy(radialGradient, uniforms, sizeof(radialGradient));
 		
 		[self setTexture:gradient.texture];
 		[self pushTexturedRectX:x y:y w:w h:h tx:x ty:y tw:w th:h color:color withTransform:transform];
@@ -460,7 +478,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	}
 
 	if( pw > 0 && ph > 0 ) { // We may have to skip entirely
-		[self setProgram:sharedGLContext.programPattern];
+		[self setProgram:kEJ2DProgramPattern];
 		[self setTexture:texture];
 		
 		[self pushTexturedRectX:x y:y w:pw h:ph tx:x/tw ty:y/th tw:pw/tw th:ph/th
@@ -470,7 +488,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	if( pw < w || ph < h ) {
 		// Draw clearing rect for the stencil buffer if we didn't fill everything with
 		// the pattern image - happens when not repeating in both directions
-		[self setProgram:sharedGLContext.programFlat];
+		[self setProgram:kEJ2DProgramFlat];
 		EJColorRGBA transparentBlack = {.hex = 0x00000000};
 		[self pushRectX:x y:y w:w h:h color:transparentBlack withTransform:transform];
 	}
@@ -519,24 +537,68 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 
 - (void)flushBuffers {
 	if( vertexBufferIndex == 0 ) { return; }
-	
-	glDrawArrays(GL_TRIANGLES, 0, vertexBufferIndex);
-	needsPresenting = YES;
+	int count = vertexBufferIndex;
 	vertexBufferIndex = 0;
+	needsPresenting = YES;
+	
+	id<MTLRenderCommandEncoder> enc = self.encoder;
+	if( !enc ) { return; }
+	
+	BOOL textured = (currentProgram != kEJ2DProgramFlat);
+	id<MTLTexture> metalTexture = nil;
+	if( textured ) {
+		metalTexture = currentTexture.metalTexture;
+		if( !metalTexture ) { return; }
+		[currentTexture markMetalRead:metal.commandBuffer];
+	}
+	
+	BOOL hasDepthStencil = !!depthStencilTexture;
+	id<MTLRenderPipelineState> pipeline = [metal pipelineForProgram:currentProgram
+		blendSource:EJCompositeOperationFuncs[blendOperation].source
+		destination:EJCompositeOperationFuncs[blendOperation].destination
+		colorWrite:colorWrite depthStencil:hasDepthStencil
+		sampleCount:(msaaTexture ? msaaSamples : 1)];
+	if( !pipeline ) { return; }
+	if( pipeline != boundPipeline ) {
+		[enc setRenderPipelineState:pipeline];
+		boundPipeline = pipeline;
+	}
+	
+	if( hasDepthStencil ) {
+		[enc setDepthStencilState:[metal depthStencilState:depthStencil]];
+		[enc setStencilReferenceValue:depthStencil.stencilRef];
+	}
+	
+	// Canvas pixels to clip space, with y pointing down
+	float screen[2] = {width, -height};
+	[enc setVertexBytes:screen length:sizeof(screen) atIndex:1];
+	
+	if( textured ) {
+		[enc setFragmentTexture:metalTexture atIndex:0];
+		[enc setFragmentSamplerState:[metal samplerNearest:nearestFilter] atIndex:0];
+	}
+	if( currentProgram == kEJ2DProgramRadialGradient ) {
+		[enc setFragmentBytes:radialGradient length:sizeof(radialGradient) atIndex:0];
+	}
+	
+	NSUInteger offset;
+	id<MTLBuffer> buffer = [metal bufferWithBytes:vertexBuffer length:count * sizeof(EJVertex) offset:&offset];
+	[enc setVertexBuffer:buffer offset:offset atIndex:0];
+	[enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
 }
 
 - (BOOL)imageSmoothingEnabled {
-	return (textureFilter == GL_LINEAR);
+	return !nearestFilter;
 }
 
 - (void)setImageSmoothingEnabled:(BOOL)enabled {
-	[self setTexture:NULL]; // force rebind for next texture
-	textureFilter = (enabled ? GL_LINEAR : GL_NEAREST);
+	[self flushBuffers];
+	nearestFilter = !enabled;
 }
 
 - (void)setGlobalCompositeOperation:(EJCompositeOperation)op {
 	[self flushBuffers];
-	glBlendFunc( EJCompositeOperationFuncs[op].source, EJCompositeOperationFuncs[op].destination );
+	blendOperation = op;
 	state->globalCompositeOperation = op;
 }
 
@@ -616,7 +678,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	
 	// Render clip path, if present and different
 	if( state->clipPath && state->clipPath != oldClipPath ) {
-		[self setProgram:sharedGLContext.programFlat];
+		[self setProgram:kEJ2DProgramFlat];
 		[state->clipPath drawPolygonsToContext:self fillRule:state->clipPath.fillRule target:kEJPathPolygonTargetDepth];
 	}
 }
@@ -652,7 +714,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	float tw = texture.width;
 	float th = texture.height;
 	
-	[self setProgram:sharedGLContext.programTexture];
+	[self setProgram:kEJ2DProgramTexture];
 	[self setTexture:texture];
 	[self pushTexturedRectX:dx y:dy w:dw h:dh tx:sx/tw ty:sy/th tw:sw/tw th:sh/th
 		color:EJCanvasBlendWhiteColor(state) withTransform:state->transform];
@@ -664,7 +726,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 			color:EJCanvasBlendWhiteColor(state) withTransform:state->transform];
 	}
 	else {
-		[self setProgram:sharedGLContext.programFlat];
+		[self setProgram:kEJ2DProgramFlat];
 		
 		EJColorRGBA cc = EJCanvasBlendFillColor(state);
 		[self pushRectX:x y:y w:w h:h
@@ -690,7 +752,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 
 // Strokes a path, cut into dashes if setLineDash() asked for them
 - (void)strokePath:(EJPath *)strokePath {
-	[self setProgram:sharedGLContext.programFlat];
+	[self setProgram:kEJ2DProgramFlat];
 	if( state->lineDashCount > 0 ) {
 		EJPath *dashed = [strokePath newDashedPathWithPattern:state->lineDash
 			count:state->lineDashCount offset:state->lineDashOffset];
@@ -703,7 +765,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)clearRectX:(float)x y:(float)y w:(float)w h:(float)h {
-	[self setProgram:sharedGLContext.programFlat];
+	[self setProgram:kEJ2DProgramFlat];
 	
 	EJCompositeOperation oldOp = state->globalCompositeOperation;
 	self.globalCompositeOperation = kEJCompositeOperationDestinationOut;
@@ -715,26 +777,15 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (EJImageData*)getImageDataSx:(short)sx sy:(short)sy sw:(short)sw sh:(short)sh {
+	[self endRenderPass];
 	
-	[self flushBuffers];
-	
-	if( upsideDown ) {
-		sy = bufferHeight-sy-sh;
-	}
-	
-	NSMutableData *pixels = [NSMutableData dataWithLength:sw * sh * 4 * sizeof(GLubyte)];
-	glReadPixels(sx, sy, sw, sh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.mutableBytes);
-	
-	if( upsideDown ) {
-		[EJTexture flipPixelsY:pixels.mutableBytes bytesPerRow:sw*4 rows:sh];
-	}
-	
+	NSMutableData *pixels = [metal readPixelsFromTexture:texture.metalTexture x:sx y:sy width:sw height:sh];
 	return [[[EJImageData alloc] initWithWidth:sw height:sh pixels:pixels] autorelease];
 }
 
 - (void)putImageData:(EJImageData*)imageData dx:(float)dx dy:(float)dy {
 	EJTexture *texture = imageData.texture;
-	[self setProgram:sharedGLContext.programTexture];
+	[self setProgram:kEJ2DProgramTexture];
 	[self setTexture:texture];
 	
 	short tw = texture.width;
@@ -760,7 +811,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 }
 
 - (void)fill:(EJPathFillRule)fillRule {
-	[self setProgram:sharedGLContext.programFlat];
+	[self setProgram:kEJ2DProgramFlat];
 	[path drawPolygonsToContext:self fillRule:fillRule target:kEJPathPolygonTargetColor];
 }
 
@@ -838,7 +889,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	float scale = CGAffineTransformGetScale( state->transform );
 	EJFont *font = [fontCache fontWithDescriptor:state->font contentScale:scale];
 	
-	[self setProgram:sharedGLContext.programAlphaTexture];
+	[self setProgram:kEJ2DProgramAlphaTexture];
 	[font drawString:text toContext:self x:x y:y];
 }
 
@@ -846,7 +897,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	float scale = CGAffineTransformGetScale( state->transform );
 	EJFont *font = [fontCache outlineFontWithDescriptor:state->font lineWidth:state->lineWidth contentScale:scale];
 	
-	[self setProgram:sharedGLContext.programAlphaTexture];
+	[self setProgram:kEJ2DProgramAlphaTexture];
 	[font drawString:text toContext:self x:x y:y];
 }
 
@@ -862,7 +913,7 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 	state->clipPath = nil;
 	
 	state->clipPath = path.copy;
-	[self setProgram:sharedGLContext.programFlat];
+	[self setProgram:kEJ2DProgramFlat];
 	[state->clipPath drawPolygonsToContext:self fillRule:fillRule target:kEJPathPolygonTargetDepth];
 }
 
@@ -872,10 +923,9 @@ const EJCompositeOperationFunc EJCompositeOperationFuncs[] = {
 		[state->clipPath release];
 		state->clipPath = nil;
 		
-		glDepthMask(GL_TRUE);
-		glClear(GL_DEPTH_BUFFER_BIT);
-		glDepthMask(GL_FALSE);
-		glDepthFunc(GL_ALWAYS);
+		[self clearDepth];
+		depthStencil.depthWrite = NO;
+		depthStencil.depthCompare = MTLCompareFunctionAlways;
 	}
 }
 
