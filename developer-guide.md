@@ -102,7 +102,7 @@ just install        # reinstall the last build
 just launch         # start it again and follow its output
 ```
 
-The first build asks Xcode to create a provisioning profile for your bundle ID (`-allowProvisioningUpdates`). If it fails, open the project once with `just xcode`, select the **Ejecta-TV** target → **Signing & Capabilities**, and pick your team. Xcode shows what's wrong there.
+It builds for the paired TV named `EJECTA_TV`, so the first build can register that TV with your team and make a provisioning profile for your bundle ID (`-allowProvisioningUpdates -allowProvisioningDeviceRegistration`). macOS then asks whether `codesign` may use your signing key: enter your Mac login password and click **Always Allow**. If the build still fails, open the project once with `just xcode`, select the **Ejecta-TV** target → **Signing & Capabilities**, and pick your team. Xcode shows what's wrong there.
 
 ### Debugging JavaScript with Safari
 
@@ -221,6 +221,9 @@ Anything else in WebGL 2 is missing, and `just check` lists it if a game uses it
 ## Troubleshooting
 
 - **`just devices` doesn't list the TV**: wake it, check both are on the same network, and re-pair from Xcode's Devices window.
+- **"Your team has no devices"**: the TV isn't registered with the team yet. `just tv` registers it when the TV is paired and awake; check `just devices` lists it as connected.
+- **`errSecInternalComponent` when signing**: the keychain prompt for `codesign` wasn't answered. Run `just tv` again and click **Always Allow**.
+- **Signing certificate shows as not valid** (`security find-identity -v -p codesigning` finds 0): the keychain lacks Apple's WWDR G3 intermediate certificate. Download *Worldwide Developer Relations - G3* from apple.com/certificateauthority and add it to the login keychain.
 - **"No profiles for … were found"**: the bundle ID is taken or the team is wrong. Change `EJECTA_BUNDLE_ID`, or open the project and fix signing as above.
 - **The app opens and closes after 7 days**: the free Apple ID profile expired. Run `just tv` again.
 - **Build error about `App`**: `App/` doesn't exist. Run `just setup` or `just littlejs-example`.

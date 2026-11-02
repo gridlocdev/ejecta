@@ -125,20 +125,21 @@ simulators:
 devices:
     xcrun devicectl list devices
 
-# Build and sign for a real Apple TV
-build-tv: setup _need-team
+# Build and sign for the Apple TV. Building for that device, not any tvOS
+# device, lets Xcode register it with the team and make a profile for it
+build-tv: setup _need-team _need-tv
     xcodebuild -project {{project}} -scheme {{scheme}} -configuration Debug \
-        -destination 'generic/platform=tvOS' -derivedDataPath {{derived}} \
-        -allowProvisioningUpdates DEVELOPMENT_TEAM={{team_id}} \
-        PRODUCT_BUNDLE_IDENTIFIER={{bundle_id}} build -quiet
+        -destination "id=$(just _tv-id)" -derivedDataPath {{derived}} \
+        -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+        DEVELOPMENT_TEAM={{team_id}} PRODUCT_BUNDLE_IDENTIFIER={{bundle_id}} build -quiet
 
 # Install the last build on the Apple TV over the network
 install: _need-tv
-    xcrun devicectl device install app --device "{{tv}}" {{device_app}}
+    xcrun devicectl device install app --device "$(just _tv-id)" {{device_app}}
 
 # Start the game on the Apple TV, showing its console.log output here
 launch: _need-tv
-    xcrun devicectl device process launch --console --terminate-existing --device "{{tv}}" {{bundle_id}}
+    xcrun devicectl device process launch --console --terminate-existing --device "$(just _tv-id)" {{bundle_id}}
 
 # Build, install and start it on the Apple TV
 tv: build-tv install launch
@@ -156,3 +157,23 @@ _need-team:
 
 _need-tv:
     @[ -n "{{tv}}" ] || { echo "Set EJECTA_TV in .env to your Apple TV's name from 'just devices'"; exit 1; }
+
+# The UDID of the paired Apple TV named EJECTA_TV. devicectl can list a TV
+# twice under one name for a while after pairing, so pick the real, paired one
+_tv-id:
+    #!/usr/bin/env python3
+    import json, os, subprocess, sys, tempfile
+    name = os.environ['EJECTA_TV']
+    with tempfile.NamedTemporaryFile(suffix='.json') as f:
+        subprocess.run(['xcrun', 'devicectl', 'list', 'devices', '--json-output', f.name],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        devices = json.load(f)['result']['devices']
+    ids = sorted({d['hardwareProperties']['udid'] for d in devices
+        if d['deviceProperties'].get('name') == name
+        and d['hardwareProperties'].get('reality') == 'physical'
+        and d['connectionProperties'].get('pairingState') == 'paired'
+        and d['hardwareProperties'].get('udid')})
+    if len(ids) != 1:
+        sys.exit(name + (" isn't paired: pair it in Xcode > Window > Devices and Simulators"
+            if not ids else " names more than one paired device; rename one"))
+    print(ids[0])
