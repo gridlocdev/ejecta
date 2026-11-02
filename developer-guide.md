@@ -62,14 +62,26 @@ just check    # run the game in App/ against Ejecta's API
   - `effects_test.c`: each effect's response, and the convolver against direct convolution.
   - `ogg_test.c`: decoding the Ogg files in `data/`.
 - `just test-canvas` tests how lines are cut into dashes (`EJPathDash.h`).
-- `just test-js` runs `tools/ejecta-sim/tests/webaudio` in the API simulator. It checks the Web Audio API and `fetch()` in `Ejecta.js`: gain, panning, ramps, loop points, `ended` events, every effect node, an echo with feedback, `decodeAudioData` (WAV and Ogg), suspend and resume, and loading files. Lines starting with `FAIL` make it exit with an error.
+- `just test-js` runs two test apps in the API simulator. Lines starting with `FAIL` make it exit with an error.
+  - `tools/ejecta-sim/tests/webaudio` checks the Web Audio API and `fetch()` in `Ejecta.js`: gain, panning, ramps, loop points, `ended` events, every effect node, an echo with feedback, `decodeAudioData` (WAV and Ogg), suspend and resume, and loading files.
+  - `tools/ejecta-sim/tests/webgl2` checks the GLSL ES 3.00 translation and that WebGL 2 calls reach the right WebGL 1 calls. Nothing is drawn there; `just test-sim` draws for real.
 - `just check [seconds] [--lenient]` runs `App/` in the API simulator (`tools/ejecta-sim/sim.mjs`). It lists every property the game reads that Ejecta doesn't bind, plus errors, sound levels and how many canvas calls a frame makes. A fake Siri Remote clicks and swipes once a second. `--lenient` keeps going past missing functions, so you see all of them in one run.
 
 The simulator reads the `EJ_BIND_*` macros in `Source/`, so it always matches the native code. Audio runs through the real C code (mixer, effects and Ogg decoder), built as WebAssembly in `tools/ejecta-sim/wasm/mixer.wasm`. That file is checked in, so you only rebuild it after changing the C audio code: `just build-wasm`, which needs LLVM's clang and `wasm-ld` (on macOS, `brew install llvm lld` and run it with `CC=$(brew --prefix llvm)/bin/clang`). The simulator warns, and CI fails, if `mixer.wasm` is older than the C code. The simulator doesn't draw anything, so it can't catch rendering bugs. A few reported reads are harmless feature checks, like `navigator.audioSession`.
 
-These are the same checks CI runs on every push.
+These run on any machine, and CI runs them on every push.
 
-### 2. tvOS Simulator: `just run-sim`
+### 2. tvOS Simulator: `just test-sim` and `just run-sim`
+
+```sh
+just test-sim       # the device tests, in a fresh simulator; replaces App/
+```
+
+`just test-sim` builds the app with `tools/device-tests/App` (plus LittleJS and its shim) and runs it in a new Apple TV simulator with `tools/device-tests/run_sim.py`. The tests draw with the real canvas and WebGL code and read the pixels back. They also check audio with effects, Ogg decoding, `fetch()`, and LittleJS rendering on WebGL 2 to the screen. It prints the app's console and exits with an error on any `FAIL` line, a crash, or a timeout. CI runs it on every push.
+
+Add a test there when you change native code; it's the only automated check that runs Apple's frameworks.
+
+To watch a game instead:
 
 ```sh
 just run-sim        # build, install and start; console output appears here
@@ -108,7 +120,7 @@ Web Inspector gives you the console with live objects, breakpoints, and the prof
 `.github/workflows/tvos.yml` runs on every push:
 
 - **littlejs-check** (Linux): `just test`, then `just littlejs-example` and `just check`.
-- **build** (macOS): `just build-sim`, which compiles the `Ejecta-TV` target for the tvOS Simulator without signing.
+- **build** (macOS): `just build-sim`, which compiles the `Ejecta-TV` target for the tvOS Simulator without signing, then `just test-sim`, which runs the device tests in it.
 
 GitHub turns Actions off for new forks. If nothing runs, enable them under the repository's **Actions** tab.
 
@@ -126,6 +138,7 @@ GitHub turns Actions off for new forks. If nothing runs, enable them under the r
 | `tools/ejecta-sim/` | The API simulator and its tests |
 | `tools/audio-mixer-test/`, `tools/canvas-test/` | C and C++ tests |
 | `tools/ejecta-sim/wasm/` | Builds the audio C code as WebAssembly for the simulator |
+| `tools/device-tests/` | Tests that run inside the app in a tvOS Simulator, and the script that runs them |
 | `App/` | The game that gets built in (git-ignored) |
 
 ## Working on Ejecta
@@ -160,6 +173,23 @@ The simulator picks up new bindings automatically. If JavaScript depends on what
 - **Reverb** is uniformly partitioned FFT convolution in 512-frame blocks, so its output is 512 frames late. A reverb that has gone quiet stops using CPU.
 
 Up to 64 sounds play at once. A `start()` beyond that fires `ended` straight away. Decoding goes through AVAudioFile (WAV, MP3, AAC/M4A, AIFF, CAF, FLAC) and stb_vorbis (Ogg Vorbis). Audio stops while the app is in the background and picks up when it returns.
+
+### How WebGL 2 works here
+
+Ejecta's native WebGL is WebGL 1 on OpenGL ES 2, which can't share textures with an OpenGL ES 3 context. `getContext('webgl2')` therefore returns the canvas's WebGL 1 context wrapped by `__ejectaMakeWebGL2` in `Ejecta.js`:
+
+- **Vertex array objects and instancing** call `OES_vertex_array_object` and `ANGLE_instanced_arrays`.
+- **Shaders** with `#version 300 es` are translated to GLSL ES 1.00 by `__ejectaTranslateGLSL`:
+  - `in` and `out` become `attribute` and `varying`.
+  - The fragment output becomes a global that `main()` copies to `gl_FragColor`.
+  - `texture()` becomes `texture2D()` or `textureCube()`.
+  - `round()` and `trunc()` get helper functions.
+  - `layout(location=N)` on vertex inputs is applied with `bindAttribLocation` before linking.
+- **Sized texture formats** (`RGBA8`) map to their WebGL 1 formats, and `texStorage2D` allocates with `texImage2D`.
+- **Samplers** are accepted, but a texture keeps its own parameters.
+- **Version strings**: `getParameter(VERSION)` says WebGL 2.0.
+
+Anything else in WebGL 2 is missing, and `just check` lists it if a game uses it. A native OpenGL ES 3 path would need every Ejecta context, 2D included, moved to ES 3.
 
 ## Troubleshooting
 

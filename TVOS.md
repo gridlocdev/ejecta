@@ -1,6 +1,6 @@
 # Ejecta on Apple TV
 
-This fork brings Ejecta's `Ejecta-TV` target up to date for current Xcode and tvOS. It adds the Web Audio API and `fetch()`, `just` recipes to build and install from a Mac, and what's needed to run [LittleJS](https://github.com/KilledByAPixel/LittleJS) games.
+This fork brings Ejecta's `Ejecta-TV` target up to date for current Xcode and tvOS. It adds WebGL 2, the Web Audio API and `fetch()`, `just` recipes to build and install from a Mac, and what's needed to run [LittleJS](https://github.com/KilledByAPixel/LittleJS) games.
 
 **Setup, local testing and working on the code: see the [developer guide](developer-guide.md).**
 
@@ -13,6 +13,7 @@ just littlejs-example   # put the LittleJS example in App/
 just test               # tests that don't need Xcode
 just check              # run App/ against Ejecta's API, list anything missing
 just run-sim            # build and start it in the tvOS Simulator
+just test-sim           # run the device tests in a fresh tvOS Simulator
 just tv                 # build, install over Wi‑Fi and start it on the Apple TV
 ```
 
@@ -24,7 +25,8 @@ just tv                 # build, install over Wi‑Fi and start it on the Apple 
 - **Canvas**: `ctx.ellipse()` and dashed lines (`setLineDash()`, `getLineDash()`, `lineDashOffset`) are implemented.
 - **Typed arrays**: native code now reads a typed array view from its own start. Before, a `subarray()` passed to WebGL's `bufferData`, `readPixels` or similar was read from the start of its whole buffer.
 - **Canvas style**: `canvas.style.width = "100%"` (and height, left, top) is now relative to the screen instead of being read as 100 px.
-- **WebGL**: `getContext("webgl2")` returns `null` instead of a WebGL 1 context, so engines can tell it isn't there and fall back.
+- **WebGL 2**: `getContext("webgl2")` gives a WebGL 2 context built on WebGL 1 and its extensions: vertex array objects, instancing, and GLSL ES 3.00 shaders, translated to 1.00 with their `layout(location)`s kept. It covers 2D engines like LittleJS; see [How WebGL 2 works here](developer-guide.md#how-webgl-2-works-here) for what it doesn't cover.
+- **WebGL fix**: offscreen WebGL canvases drew to no framebuffer until their size was set a second time, so nothing they drew showed. Fixed.
 - **DOM emulation**: `appendChild`, `insertBefore` and `removeChild` return the node as in a browser, and children get `parentElement`. `document.hasFocus()` and `document.activeElement` exist.
 - **Console**: `console.error(error)` prints the error and its stack instead of `{}`. Debug builds can be inspected with Safari's Web Inspector.
 - **Gamepads**: on modern controllers, Options, Menu and the stick buttons now map to the standard buttons 8–11.
@@ -40,7 +42,7 @@ just tv
 
 This copies your folder into `App/` and writes an `App/index.js` that loads LittleJS, then `extras/littlejs/littlejs-ejecta.js`, then your game. Your game needs to be a plain script that uses LittleJS's globals, like the LittleJS starter. ES module `import`s aren't supported.
 
-`extras/littlejs/littlejs-ejecta.js` turns LittleJS's WebGL off, so it draws with Canvas2D. It also gives LittleJS Ejecta's screen canvas and fits a `setCanvasFixedSize` canvas to the screen. ZzFX sounds, sound files and LittleJS's audio effects (`AudioReverb`, `AudioDelay`, `AudioFilter`, `AudioDistortion`, `AudioCompressor`) work through Ejecta's Web Audio. In the example game, Play/Pause cycles through a reverb and an echo.
+LittleJS renders with WebGL 2. In a browser it layers a WebGL canvas and a 2D canvas (for text) on the page; Ejecta shows one screen canvas, so `extras/littlejs/littlejs-ejecta.js` draws both into it after each frame, centered and fitted the way the page would show them (including `setCanvasFixedSize`). ZzFX sounds, sound files and LittleJS's audio effects (`AudioReverb`, `AudioDelay`, `AudioFilter`, `AudioDistortion`, `AudioCompressor`) work through Ejecta's Web Audio. In the example game, Play/Pause cycles through a reverb and an echo.
 
 ## Controls
 
@@ -57,7 +59,7 @@ To keep Menu from quitting (for a pause menu), set `navigator.getGamepads()[0].e
 
 ## Known gaps
 
-- **No WebGL 2.** LittleJS uses Canvas2D, which is fine for most 2D games. Thousands of sprites a frame will be slower than in a browser.
+- **WebGL 2 is a subset.** No integer or 3D textures, uniform buffers, transform feedback, multiple render targets or `blitFramebuffer`, and no GLSL ES 3.00 features without a 1.00 equivalent (`texelFetch`, `textureSize`, bit operations). LittleJS's 2D rendering doesn't need them; its 3D plugin does.
 - **Audio graph limits**: up to 64 sounds at once, 64 effect nodes, and 16 connections out of each. Connecting a node to an `AudioParam` (modulation) does nothing, `AnalyserNode` reports silence, and a `WaveShaperNode`'s `oversample` is ignored. Reverb (`ConvolverNode`) output is 512 frames (about 11 ms) late.
 - **Ogg Opus** files aren't decoded unless tvOS's own decoder handles them; Ogg Vorbis is.
-- **Not yet run on a device.** CI builds the `Ejecta-TV` target with Xcode 16.4, and the C audio code and the JavaScript run under tests. Nothing has run in the Simulator or on an Apple TV yet.
+- **Tested in the tvOS Simulator, not yet on an Apple TV.** CI builds the app with Xcode 16.4 and runs `tools/device-tests` in a tvOS 18.5 Simulator: canvas, WebGL 1 and 2, LittleJS on WebGL 2, audio with effects, Ogg and `fetch()` all pass there. The Simulator renders in software, so speed on a real Apple TV is still unmeasured.
