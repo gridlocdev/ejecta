@@ -180,6 +180,21 @@ window.Audio = Ejecta.Audio;
 window.Video = Ejecta.Video;
 window.XMLHttpRequest = Ejecta.HttpRequest;
 window.localStorage = new Ejecta.LocalStorage();
+
+// The context types, which games test for with typeof and instanceof (three.js,
+// LittleJS's 3D). Ejecta's contexts are native objects with no JS class, so
+// instanceof checks what a context can do
+var contextType = function( name, test ) {
+	var type = function() { throw new TypeError('Illegal constructor'); };
+	Object.defineProperty(type, 'name', {value: name});
+	Object.defineProperty(type, Symbol.hasInstance, {value: function( value ) {
+		return !!value && typeof value === 'object' && test(value);
+	}});
+	window[name] = type;
+};
+contextType('CanvasRenderingContext2D', function( c ) { return typeof c.fillRect === 'function'; });
+contextType('WebGLRenderingContext', function( c ) { return typeof c.drawArrays === 'function' && typeof c.texStorage3D !== 'function'; });
+contextType('WebGL2RenderingContext', function( c ) { return typeof c.texStorage3D === 'function'; });
 window.WebSocket = Ejecta.WebSocket;
 
 
