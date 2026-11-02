@@ -38,6 +38,12 @@
 
 #import "EJTextureStorage.h"
 
+// Whether EJTexture keeps this parameter, and sets it when bound
+static inline BOOL EJTextureParamIsCached(GLenum pname) {
+	return pname == GL_TEXTURE_MIN_FILTER || pname == GL_TEXTURE_MAG_FILTER ||
+		pname == GL_TEXTURE_WRAP_S || pname == GL_TEXTURE_WRAP_T;
+}
+
 @interface EJTexture : NSObject <NSCopying> {
 	BOOL cached;
 	BOOL drawFlippedY;

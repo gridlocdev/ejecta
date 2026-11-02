@@ -27,11 +27,18 @@
 
 #define EJ_BIND_CONST_GL(NAME) EJ_BIND_CONST(NAME, GL_##NAME)
 
+// The targets a texture unit holds a texture for; 3D and 2D array are WebGL 2
+typedef enum {
+	kEJTextureSlot2D,
+	kEJTextureSlotCubeMap,
+	kEJTextureSlot3D,
+	kEJTextureSlot2DArray,
+	kEJTextureSlotCount
+} EJTextureSlot;
+
 typedef struct {
-	EJTexture *texture;
-	JSObjectRef jsTexture;
-	EJTexture *cubeMap;
-	JSObjectRef jsCubeMap;
+	EJTexture *textures[kEJTextureSlotCount];
+	JSObjectRef jsTextures[kEJTextureSlotCount];
 } EJCanvasContextTextureUnit;
 
 @class EJJavaScriptView;
@@ -68,6 +75,17 @@ typedef struct {
 - (void)deleteShader:(GLuint)shader;
 
 - (void)addVertexArray:(GLuint)vertexArray obj:(JSObjectRef)objp;
+
+// The texture unit slot for a texture bind target, or -1
+- (int)textureSlotForTarget:(GLenum)target;
+
+// The bind target for an image target: a cube map face's is the cube map
+- (GLenum)bindTargetForImageTarget:(GLenum)target;
+
+// Keeps the textures dictionary current after an upload may have given the
+// texture a new OpenGL texture
+- (void)updateTexture:(EJTexture *)texture jsTexture:(JSObjectRef)jsTexture
+	oldTextureId:(GLint)oldTextureId bindTarget:(GLenum)bindTarget;
 - (void)deleteVertexArray:(GLuint)vertexArray;
 
 @property (readonly, nonatomic) EJCanvasContextWebGL *renderingContext;

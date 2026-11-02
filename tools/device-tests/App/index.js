@@ -274,6 +274,176 @@ function webgl2Tests() {
 	catch( e ) { check('webgl2 mipmapped texture of any size', false, e.message); }
 }
 
+// Draws a full canvas triangle with a GLSL 3.00 fragment shader, and returns
+// the pixel in the middle
+function drawFragment( gl, fragment ) {
+	var program = compileProgram(gl,
+		'#version 300 es\nin vec2 p; void main(){ gl_Position = vec4(p, 0, 1); }',
+		'#version 300 es\nprecision highp float; precision highp sampler3D; precision highp sampler2DArray;' +
+		'out vec4 o;' + fragment);
+	gl.useProgram(program);
+	var buffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+	var at = gl.getAttribLocation(program, 'p');
+	gl.enableVertexAttribArray(at);
+	gl.vertexAttribPointer(at, 2, gl.FLOAT, false, 0, 0);
+	gl.clearColor(0, 0, 0, 1);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.drawArrays(gl.TRIANGLES, 0, 3);
+	var pixel = new Uint8Array(4);
+	gl.readPixels(4, 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+	gl.disableVertexAttribArray(at);
+	gl.deleteBuffer(buffer);
+	gl.deleteProgram(program);
+	return rgba(pixel);
+}
+
+function nearest( gl, target ) {
+	gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+}
+
+function webgl2TextureTests() {
+	var canvas = document.createElement('canvas');
+	canvas.width = canvas.height = 8;
+	var gl = canvas.getContext('webgl2');
+	if( !gl ) { return skip('webgl2 textures', 'getContext("webgl2") returned null'); }
+
+	function test( name, fn ) {
+		try { fn(); }
+		catch( e ) { check(name, false, e.message); }
+	}
+
+	test('webgl2 3D texture', function() {
+		var texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_3D, texture);
+		gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+			new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]));
+		nearest(gl, gl.TEXTURE_3D);
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+		check('webgl2 3D texture binding', gl.getParameter(gl.TEXTURE_BINDING_3D) === texture);
+		check('webgl2 TEXTURE_WRAP_R', gl.getTexParameter(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R) === gl.CLAMP_TO_EDGE,
+			gl.getTexParameter(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R));
+		var layer = drawFragment(gl, 'uniform sampler3D s; void main(){ o = texture(s, vec3(.5, .5, .75)); }');
+		check('webgl2 3D texture', same(layer, [0, 255, 0, 255]), layer);
+		gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE,
+			new Uint8Array([0, 0, 255, 255]));
+		var changed = drawFragment(gl, 'uniform sampler3D s; void main(){ o = texelFetch(s, ivec3(0, 0, 1), 0); }');
+		check('webgl2 texSubImage3D', same(changed, [0, 0, 255, 255]), changed);
+		gl.bindTexture(gl.TEXTURE_3D, null);
+		check('webgl2 unbinds the 3D texture', gl.getParameter(gl.TEXTURE_BINDING_3D) === null);
+	});
+
+	test('webgl2 2D array texture', function() {
+		var texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
+		gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 1, 1, 3);
+		gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, 1, 1, 3, gl.RGBA, gl.UNSIGNED_BYTE,
+			new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 255, 255, 0, 255]));
+		nearest(gl, gl.TEXTURE_2D_ARRAY);
+		check('webgl2 texStorage3D is immutable', gl.getTexParameter(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_IMMUTABLE_FORMAT) === true);
+		var layer = drawFragment(gl, 'uniform sampler2DArray s; void main(){ o = texture(s, vec3(.5, .5, 2)); }');
+		check('webgl2 2D array texture', same(layer, [255, 255, 0, 255]), layer);
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+	});
+
+	test('webgl2 float textures', function() {
+		var half = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, half);
+		// 0.5 and 1.0 as half floats
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.HALF_FLOAT, new Uint16Array([0x3800, 0x3C00]));
+		nearest(gl, gl.TEXTURE_2D);
+		var rg = drawFragment(gl, 'uniform sampler2D s; void main(){ o = vec4(texture(s, vec2(.5)).rg, 0, 1); }');
+		check('webgl2 RG16F texture', same(rg, [128, 255, 0, 255]), rg);
+
+		var single = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, single);
+		// The second pixel, from srcOffset
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1, .25]), 1);
+		nearest(gl, gl.TEXTURE_2D);
+		var red = drawFragment(gl, 'uniform sampler2D s; void main(){ o = vec4(texture(s, vec2(.5)).r, 0, 0, 1); }');
+		check('webgl2 R32F texture from srcOffset', same(red, [64, 0, 0, 255]), red);
+
+		var integer = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, integer);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, new Uint32Array([3000000000]));
+		nearest(gl, gl.TEXTURE_2D);
+		var unsigned = drawFragment(gl, 'uniform highp usampler2D s; void main(){ o = vec4(texelFetch(s, ivec2(0), 0).r == 3000000000u, 0, 0, 1); }');
+		check('webgl2 R32UI texture', same(unsigned, [255, 0, 0, 255]), unsigned);
+		gl.bindTexture(gl.TEXTURE_2D, null);
+	});
+
+	test('webgl2 textures from a canvas', function() {
+		var source = document.createElement('canvas');
+		source.width = 3;
+		source.height = 1;
+		var c = source.getContext('2d');
+		c.fillStyle = '#ff0000'; c.fillRect(0, 0, 1, 1);
+		c.fillStyle = '#00ff00'; c.fillRect(1, 0, 1, 1);
+		c.fillStyle = '#0000ff'; c.fillRect(2, 0, 1, 1);
+
+		// three.js: immutable storage, then the image into it
+		var stored = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, stored);
+		gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 3, 1);
+		gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
+		nearest(gl, gl.TEXTURE_2D);
+		var green = drawFragment(gl, 'uniform sampler2D s; void main(){ o = texelFetch(s, ivec2(1, 0), 0); }');
+		check('webgl2 texStorage2D, then texSubImage2D from a canvas', same(green, [0, 255, 0, 255]), green);
+
+		// 9 bytes a row: UNPACK_ALIGNMENT 4 must not apply to the image
+		var rgb = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, rgb);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, source);
+		nearest(gl, gl.TEXTURE_2D);
+		var blue = drawFragment(gl, 'uniform sampler2D s; void main(){ o = texelFetch(s, ivec2(2, 0), 0); }');
+		check('webgl2 RGB8 texture from a canvas', same(blue, [0, 0, 255, 255]), blue);
+
+		// sRGB: 128 is about 55 in linear
+		c.fillStyle = '#808080'; c.fillRect(0, 0, 3, 1);
+		var srgb = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, srgb);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
+		nearest(gl, gl.TEXTURE_2D);
+		var linear = drawFragment(gl, 'uniform sampler2D s; void main(){ o = texture(s, vec2(.5)); }');
+		check('webgl2 SRGB8_ALPHA8 texture', same(linear, [55, 55, 55, 255], 3), linear);
+		gl.bindTexture(gl.TEXTURE_2D, null);
+	});
+
+	test('webgl2 sampler', function() {
+		var texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+			new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]));
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		var shader = 'uniform sampler2D s; void main(){ o = texture(s, vec2(.4, .5)); }';
+		var blended = drawFragment(gl, shader);
+		check('webgl2 texture filters linearly', blended[0] > 150 && blended[0] < 210 && blended[2] > 50, blended);
+
+		var sampler = gl.createSampler();
+		gl.samplerParameteri(sampler, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.samplerParameteri(sampler, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.samplerParameterf(sampler, gl.TEXTURE_MAX_LOD, 4);
+		gl.bindSampler(0, sampler);
+		check('webgl2 sampler binding', gl.getParameter(gl.SAMPLER_BINDING) === sampler && gl.isSampler(sampler));
+		check('webgl2 getSamplerParameter', gl.getSamplerParameter(sampler, gl.TEXTURE_MAG_FILTER) === gl.NEAREST &&
+			gl.getSamplerParameter(sampler, gl.TEXTURE_MAX_LOD) === 4);
+		var sampled = drawFragment(gl, shader);
+		check('webgl2 sampler overrides the texture filter', same(sampled, [255, 0, 0, 255]), sampled);
+		gl.bindSampler(0, null);
+		check('webgl2 unbinds the sampler', gl.getParameter(gl.SAMPLER_BINDING) === null);
+		gl.deleteSampler(sampler);
+		check('webgl2 deletes the sampler', !gl.isSampler(sampler));
+
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+		check('webgl2 texture compare mode', gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE) === gl.COMPARE_REF_TO_TEXTURE);
+		gl.bindTexture(gl.TEXTURE_2D, null);
+	});
+}
+
 async function audioTests() {
 	var ctx = new AudioContext();
 	var t = ctx.currentTime;
@@ -328,7 +498,7 @@ async function littlejsTests() {
 async function run() {
 	console.log('Ejecta device tests: ' + navigator.userAgent);
 	ejecta.include('canvas2d-test.js');
-	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, audioTests, fetchTests, littlejsTests];
+	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, webgl2TextureTests, audioTests, fetchTests, littlejsTests];
 	for( var i = 0; i < steps.length; i++ ) {
 		try { await steps[i](); }
 		catch( e ) { check(steps[i].name, false, e + ' ' + e.stack); }

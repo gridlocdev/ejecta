@@ -65,6 +65,9 @@
 @interface EJBindingWebGLVertexArrayObject : EJBindingWebGLVertexArrayObjectOES
 @end
 
+@interface EJBindingWebGLSampler : EJBindingWebGLObject
+@end
+
 @interface EJBindingWebGLActiveInfo : EJBindingBase {
 	GLint size;
 	GLenum type;

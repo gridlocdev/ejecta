@@ -3,8 +3,36 @@
 #import "EJBindingWebGLExtensions.h"
 #import "EJConvertWebGL.h"
 #import "EJJavaScriptView.h"
+#import "EJDrawable.h"
 
 @implementation EJBindingCanvasContextWebGL2
+
+- (id)initWithRenderingContext:(EJCanvasContextWebGL *)renderingContextp {
+	if( self = [super initWithRenderingContext:renderingContextp] ) {
+		samplers = [NSMutableDictionary new];
+	}
+	return self;
+}
+
+- (void)dealloc {
+	EAGLContext *oldContext = [EAGLContext currentContext];
+	[EAGLContext setCurrentContext:renderingContext.glContext];
+	
+	for( NSNumber *n in samplers ) { GLuint sampler = n.intValue; glDeleteSamplers(1, &sampler); }
+	[samplers release];
+	
+	[EAGLContext setCurrentContext:oldContext];
+	[super dealloc];
+}
+
+- (void)deleteSampler:(GLuint)sampler {
+	NSNumber *key = @(sampler);
+	if( samplers[key] ) {
+		scriptView.currentRenderingContext = renderingContext;
+		glDeleteSamplers(1, &sampler);
+		[samplers removeObjectForKey:key];
+	}
+}
 
 - (int)webglVersion {
 	return EJ_WEBGL_2;
@@ -67,6 +95,11 @@ EJ_BIND_FUNCTION(getParameter, ctx, argc, argv) {
 		case GL_TEXTURE_BINDING_2D_ARRAY:
 			glGetIntegerv(pname, &intvalue);
 			return [self jsObjectOrNull:textures[@(intvalue)] ctx:ctx];
+		
+		// WebGLSampler
+		case GL_SAMPLER_BINDING:
+			glGetIntegerv(pname, &intvalue);
+			return [self jsObjectOrNull:samplers[@(intvalue)] ctx:ctx];
 		
 		// WebGLVertexArrayObject
 		case GL_VERTEX_ARRAY_BINDING:
@@ -153,6 +186,500 @@ EJ_BIND_FUNCTION(drawElementsInstanced, ctx, argc, argv) {
 	scriptView.currentRenderingContext = renderingContext;
 	glDrawElementsInstanced(mode, count, type, EJ_BUFFER_OFFSET(offset), instanceCount);
 	return NULL;
+}
+
+
+// Textures
+
+// The unpack state OpenGL applies to pixels from client memory or a pixel
+// buffer
+typedef struct {
+	GLint alignment, rowLength, imageHeight, skipPixels, skipRows, skipImages;
+} EJUnpackState;
+
+static const EJUnpackState EJUnpackStateTight = {1, 0, 0, 0, 0, 0};
+
+static EJUnpackState EJGetUnpackState() {
+	EJUnpackState state;
+	glGetIntegerv(GL_UNPACK_ALIGNMENT, &state.alignment);
+	glGetIntegerv(GL_UNPACK_ROW_LENGTH, &state.rowLength);
+	glGetIntegerv(GL_UNPACK_IMAGE_HEIGHT, &state.imageHeight);
+	glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &state.skipPixels);
+	glGetIntegerv(GL_UNPACK_SKIP_ROWS, &state.skipRows);
+	glGetIntegerv(GL_UNPACK_SKIP_IMAGES, &state.skipImages);
+	return state;
+}
+
+static void EJSetUnpackState(EJUnpackState state) {
+	glPixelStorei(GL_UNPACK_ALIGNMENT, state.alignment);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, state.rowLength);
+	glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, state.imageHeight);
+	glPixelStorei(GL_UNPACK_SKIP_PIXELS, state.skipPixels);
+	glPixelStorei(GL_UNPACK_SKIP_ROWS, state.skipRows);
+	glPixelStorei(GL_UNPACK_SKIP_IMAGES, state.skipImages);
+}
+
+static size_t EJTypedArrayElementSize(JSTypedArrayType type) {
+	switch( type ) {
+		case kJSTypedArrayTypeInt16Array:
+		case kJSTypedArrayTypeUint16Array:
+			return 2;
+		case kJSTypedArrayTypeInt32Array:
+		case kJSTypedArrayTypeUint32Array:
+		case kJSTypedArrayTypeFloat32Array:
+			return 4;
+		case kJSTypedArrayTypeFloat64Array:
+		case kJSTypedArrayTypeBigInt64Array:
+		case kJSTypedArrayTypeBigUint64Array:
+			return 8;
+		default:
+			return 1;
+	}
+}
+
+// Converts RGBA bytes to the channels of format, in place. NO if format and
+// type aren't bytes.
+static BOOL EJConvertRGBA8(GLubyte *pixels, int count, GLenum format, GLenum type) {
+	if( type != GL_UNSIGNED_BYTE ) { return NO; }
+	
+	static const int rgb[] = {0, 1, 2}, rg[] = {0, 1}, red[] = {0}, alpha[] = {3}, luminanceAlpha[] = {0, 3};
+	const int *channels;
+	int channelCount;
+	switch( format ) {
+		case GL_RGBA: return YES;
+		case GL_RGB: channels = rgb; channelCount = 3; break;
+		case GL_RG: channels = rg; channelCount = 2; break;
+		case GL_RED:
+		case GL_LUMINANCE: channels = red; channelCount = 1; break;
+		case GL_ALPHA: channels = alpha; channelCount = 1; break;
+		case GL_LUMINANCE_ALPHA: channels = luminanceAlpha; channelCount = 2; break;
+		default: return NO;
+	}
+	
+	// Each pixel is written at or before where it's read from
+	GLubyte *out = pixels;
+	for( int i = 0; i < count; i++, pixels += 4 ) {
+		for( int c = 0; c < channelCount; c++ ) {
+			*out++ = pixels[channels[c]];
+		}
+	}
+	return YES;
+}
+
+// WebGL 1 code can pass an unsized float format, as OES_texture_float allowed
+static GLenum EJInternalFormat(GLenum internalformat, GLenum format, GLenum *type) {
+	GLenum webgl1Format = EJWebGL1InternalFormat(format, type);
+	return internalformat == format ? webgl1Format : internalformat;
+}
+
+- (BOOL)unpackBufferBound {
+	GLint buffer;
+	glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &buffer);
+	return buffer != 0;
+}
+
+// Calls change with the texture for target on the active unit bound, after
+// making it mutable. Does nothing if no texture is bound there. 3D calls take
+// 3D and 2D array textures, the others 2D and cube map textures.
+- (void)changeTextureAtTarget:(GLenum)target is3D:(BOOL)is3D keepPixels:(BOOL)keepPixels
+	change:(void (^)(void))change
+{
+	GLenum bindTarget = [self bindTargetForImageTarget:target];
+	int slot = [self textureSlotForTarget:bindTarget];
+	BOOL slotIs3D = (slot == kEJTextureSlot3D || slot == kEJTextureSlot2DArray);
+	EJTexture *texture = (slot >= 0 && slotIs3D == is3D) ? activeTexture->textures[slot] : nil;
+	if( !texture ) { return; }
+	
+	GLint oldTextureId = texture.textureId;
+	[texture ensureMutableKeepPixels:keepPixels forTarget:bindTarget];
+	[texture bindToTarget:bindTarget];
+	change();
+	[self updateTexture:texture jsTexture:activeTexture->jsTextures[slot]
+		oldTextureId:oldTextureId bindTarget:bindTarget];
+}
+
+// Shares the OpenGL texture of an image instead of copying its pixels, when
+// none of them have to change
+- (BOOL)shareTextureOfImage:(JSValueRef)value target:(GLenum)target level:(GLint)level
+	internalformat:(GLenum)internalformat format:(GLenum)format type:(GLenum)type
+{
+	if(
+		target != GL_TEXTURE_2D || level != 0 || unpackFlipY || !premultiplyAlpha ||
+		(internalformat != GL_RGBA && internalformat != GL_RGBA8) ||
+		format != GL_RGBA || type != GL_UNSIGNED_BYTE
+	) {
+		return NO;
+	}
+	
+	NSObject<EJDrawable> *drawable = (NSObject<EJDrawable> *)JSValueGetPrivate(value);
+	if( !drawable || ![drawable conformsToProtocol:@protocol(EJDrawable)] ) { return NO; }
+	
+	EJTexture *source = drawable.texture;
+	EJTexture *texture = activeTexture->textures[kEJTextureSlot2D];
+	if( !source || source.isDynamic || !texture ) { return NO; }
+	
+	GLint oldTextureId = texture.textureId;
+	[texture createWithTexture:source];
+	[self updateTexture:texture jsTexture:activeTexture->jsTextures[kEJTextureSlot2D]
+		oldTextureId:oldTextureId bindTarget:GL_TEXTURE_2D];
+	[source maybeReleaseStorage];
+	return YES;
+}
+
+// Calls upload with the pixels of value. They can be:
+//  - an Image, Canvas or ImageData: its own size; width and height are ignored
+//  - an ArrayBufferView, from element srcOffset
+//  - an offset into the bound PIXEL_UNPACK_BUFFER
+//  - null: zeros, if allowNull
+// Images and arrays are flipped and premultiplied as UNPACK_FLIP_Y_WEBGL and
+// UNPACK_PREMULTIPLY_ALPHA_WEBGL say, on a copy; for arrays that's 2D only, as
+// in WebGL 2.
+- (void)withPixels:(JSValueRef)value srcOffset:(size_t)srcOffset ctx:(JSContextRef)ctx
+	width:(GLsizei)width height:(GLsizei)height depth:(GLsizei)depth
+	format:(GLenum)format type:(GLenum)type allowNull:(BOOL)allowNull is3D:(BOOL)is3D
+	upload:(void (^)(GLsizei width, GLsizei height, const void *pixels))upload
+{
+	// Offset into the pixel buffer
+	if( JSValueIsNumber(ctx, value) ) {
+		if( [self unpackBufferBound] ) {
+			upload(width, height, EJ_BUFFER_OFFSET((size_t)JSValueToNumberFast(ctx, value)));
+		}
+		return;
+	}
+	
+	// Client memory can't be used while a pixel buffer is bound
+	if( [self unpackBufferBound] ) { return; }
+	
+	// Zeros
+	if( JSValueIsNull(ctx, value) || JSValueIsUndefined(ctx, value) ) {
+		if( !allowNull ) { return; }
+		
+		GLuint bytesPerPixel = EJGetBytesPerPixel(type, format);
+		void *zeros = bytesPerPixel ? calloc((size_t)width * height * depth, bytesPerPixel) : NULL;
+		EJUnpackState state = EJGetUnpackState();
+		EJSetUnpackState(EJUnpackStateTight);
+		upload(width, height, zeros);
+		EJSetUnpackState(state);
+		free(zeros);
+		return;
+	}
+	
+	// Image, Canvas or ImageData: RGBA bytes, premultiplied
+	NSObject<EJDrawable> *drawable = (NSObject<EJDrawable> *)JSValueGetPrivate(value);
+	if( drawable && [drawable conformsToProtocol:@protocol(EJDrawable)] ) {
+		if( is3D ) {
+			NSLog(@"Warning: 3D textures can't be made from an Image, ImageData or Canvas element");
+			return;
+		}
+		
+		EJTexture *source = drawable.texture;
+		
+		// A new copy of the pixels, so it can be changed
+		GLubyte *pixels = source.pixels.mutableBytes;
+		if( pixels ) {
+			GLsizei sourceWidth = source.width;
+			GLsizei sourceHeight = source.height;
+			if( unpackFlipY ) {
+				[EJTexture flipPixelsY:pixels bytesPerRow:(sourceWidth * 4) rows:sourceHeight];
+			}
+			if( !premultiplyAlpha ) {
+				[EJTexture unPremultiplyPixels:pixels to:pixels byteLength:(sourceWidth * sourceHeight * 4) format:GL_RGBA];
+			}
+			
+			if( EJConvertRGBA8(pixels, sourceWidth * sourceHeight, format, type) ) {
+				EJUnpackState state = EJGetUnpackState();
+				EJSetUnpackState(EJUnpackStateTight);
+				upload(sourceWidth, sourceHeight, pixels);
+				EJSetUnpackState(state);
+			}
+			else {
+				NSLog(@"Warning: textures from an Image, ImageData or Canvas element must have UNSIGNED_BYTE data");
+			}
+		}
+		
+		[source maybeReleaseStorage];
+		return;
+	}
+	
+	// ArrayBufferView
+	JSTypedArrayType arrayType = JSValueGetTypedArrayType(ctx, value, NULL);
+	if( !EJ_ARRAY_MATCHES_TYPE(arrayType, type) ) { return; }
+	
+	GLuint bytesPerPixel = EJGetBytesPerPixel(type, format);
+	if( !bytesPerPixel ) { return; }
+	
+	size_t byteLength = 0;
+	GLubyte *data = JSValueGetTypedArrayPtr(ctx, value, &byteLength);
+	size_t offset = srcOffset * EJTypedArrayElementSize(arrayType);
+	if( offset > byteLength ) { return; }
+	data += offset;
+	byteLength -= offset;
+	
+	// The bytes OpenGL reads, with the unpack state
+	EJUnpackState state = EJGetUnpackState();
+	size_t rowPixels = state.rowLength ? state.rowLength : width;
+	size_t bytesPerRow = (rowPixels * bytesPerPixel + state.alignment - 1) / state.alignment * state.alignment;
+	size_t bytesPerImage = bytesPerRow * (state.imageHeight ? state.imageHeight : height);
+	size_t neededLength = 0;
+	if( width && height && depth ) {
+		neededLength = (state.skipPixels + width) * bytesPerPixel +
+			(state.skipRows + height - 1) * bytesPerRow +
+			(is3D ? (state.skipImages + depth - 1) * bytesPerImage : 0);
+	}
+	if( byteLength < neededLength ) { return; }
+	
+	BOOL premultiply = premultiplyAlpha && type == GL_UNSIGNED_BYTE;
+	if( is3D || (!unpackFlipY && !premultiply) ) {
+		upload(width, height, data);
+		return;
+	}
+	
+	GLubyte *copy = malloc(neededLength);
+	memcpy(copy, data, neededLength);
+	
+	GLubyte *firstRow = copy + state.skipRows * bytesPerRow + state.skipPixels * bytesPerPixel;
+	size_t rowLength = width * bytesPerPixel;
+	if( unpackFlipY ) {
+		GLubyte *swap = malloc(rowLength);
+		for( GLsizei y = 0; y < height / 2; y++ ) {
+			GLubyte *top = firstRow + y * bytesPerRow;
+			GLubyte *bottom = firstRow + (height - 1 - y) * bytesPerRow;
+			memcpy(swap, top, rowLength);
+			memcpy(top, bottom, rowLength);
+			memcpy(bottom, swap, rowLength);
+		}
+		free(swap);
+	}
+	if( premultiply ) {
+		for( GLsizei y = 0; y < height; y++ ) {
+			GLubyte *row = firstRow + y * bytesPerRow;
+			[EJTexture premultiplyPixels:row to:row byteLength:(int)rowLength format:format];
+		}
+	}
+	
+	upload(width, height, copy);
+	free(copy);
+}
+
+EJ_BIND_FUNCTION(texImage2D, ctx, argc, argv) {
+	// texImage2D(target, level, internalformat, format, type, source)
+	// texImage2D(target, level, internalformat, width, height, border, format, type, source)
+	// texImage2D(target, level, internalformat, width, height, border, format, type, srcData, srcOffset)
+	if( argc < 6 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLenum target, GLint level, GLenum internalformat);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	BOOL sized = (argc >= 9);
+	GLsizei width = sized ? JSValueToNumberFast(ctx, argv[3]) : 0;
+	GLsizei height = sized ? JSValueToNumberFast(ctx, argv[4]) : 0;
+	GLenum format = JSValueToNumberFast(ctx, argv[sized ? 6 : 3]);
+	GLenum type = JSValueToNumberFast(ctx, argv[sized ? 7 : 4]);
+	int source = sized ? 8 : 5;
+	size_t srcOffset = argc > source + 1 ? JSValueToNumberFast(ctx, argv[source + 1]) : 0;
+	GLenum internal = EJInternalFormat(internalformat, format, &type);
+	
+	if( [self shareTextureOfImage:argv[source] target:target level:level
+		internalformat:internal format:format type:type]
+	) {
+		return NULL;
+	}
+	
+	// If we write mip level 0, there's no point in keeping pixels
+	[self changeTextureAtTarget:target is3D:NO keepPixels:(level != 0) change:^{
+		[self withPixels:argv[source] srcOffset:srcOffset ctx:ctx width:width height:height depth:1
+			format:format type:type allowNull:YES is3D:NO
+			upload:^(GLsizei w, GLsizei h, const void *pixels) {
+				glTexImage2D(target, level, internal, w, h, 0, format, type, pixels);
+			}];
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(texSubImage2D, ctx, argc, argv) {
+	// texSubImage2D(target, level, xoffset, yoffset, format, type, source)
+	// texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, source)
+	// texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, srcData, srcOffset)
+	if( argc < 7 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLenum target, GLint level, GLint xoffset, GLint yoffset);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	BOOL sized = (argc >= 9);
+	GLsizei width = sized ? JSValueToNumberFast(ctx, argv[4]) : 0;
+	GLsizei height = sized ? JSValueToNumberFast(ctx, argv[5]) : 0;
+	GLenum format = JSValueToNumberFast(ctx, argv[sized ? 6 : 4]);
+	GLenum type = JSValueToNumberFast(ctx, argv[sized ? 7 : 5]);
+	int source = sized ? 8 : 6;
+	size_t srcOffset = argc > source + 1 ? JSValueToNumberFast(ctx, argv[source + 1]) : 0;
+	EJWebGL1InternalFormat(format, &type);
+	
+	// Keep the pixels: only part of the texture changes
+	[self changeTextureAtTarget:target is3D:NO keepPixels:YES change:^{
+		[self withPixels:argv[source] srcOffset:srcOffset ctx:ctx width:width height:height depth:1
+			format:format type:type allowNull:NO is3D:NO
+			upload:^(GLsizei w, GLsizei h, const void *pixels) {
+				glTexSubImage2D(target, level, xoffset, yoffset, w, h, format, type, pixels);
+			}];
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(texImage3D, ctx, argc, argv) {
+	// texImage3D(target, level, internalformat, width, height, depth, border, format, type, source)
+	// texImage3D(target, level, internalformat, width, height, depth, border, format, type, srcData, srcOffset)
+	if( argc < 10 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLenum target, GLint level, GLenum internalformat,
+		GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	size_t srcOffset = argc > 10 ? JSValueToNumberFast(ctx, argv[10]) : 0;
+	GLenum internal = EJInternalFormat(internalformat, format, &type);
+	
+	[self changeTextureAtTarget:target is3D:YES keepPixels:(level != 0) change:^{
+		[self withPixels:argv[9] srcOffset:srcOffset ctx:ctx width:width height:height depth:depth
+			format:format type:type allowNull:YES is3D:YES
+			upload:^(GLsizei w, GLsizei h, const void *pixels) {
+				glTexImage3D(target, level, internal, w, h, depth, border, format, type, pixels);
+			}];
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(texSubImage3D, ctx, argc, argv) {
+	// texSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, source)
+	// texSubImage3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, srcData, srcOffset)
+	if( argc < 11 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
+		GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	size_t srcOffset = argc > 11 ? JSValueToNumberFast(ctx, argv[11]) : 0;
+	EJWebGL1InternalFormat(format, &type);
+	
+	[self changeTextureAtTarget:target is3D:YES keepPixels:YES change:^{
+		[self withPixels:argv[10] srcOffset:srcOffset ctx:ctx width:width height:height depth:depth
+			format:format type:type allowNull:NO is3D:YES
+			upload:^(GLsizei w, GLsizei h, const void *pixels) {
+				glTexSubImage3D(target, level, xoffset, yoffset, zoffset, w, h, depth, format, type, pixels);
+			}];
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(texStorage2D, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	[self changeTextureAtTarget:target is3D:NO keepPixels:NO change:^{
+		glTexStorage2D(target, levels, internalformat, width, height);
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(texStorage3D, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLsizei levels, GLenum internalformat,
+		GLsizei width, GLsizei height, GLsizei depth);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	[self changeTextureAtTarget:target is3D:YES keepPixels:NO change:^{
+		glTexStorage3D(target, levels, internalformat, width, height, depth);
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(copyTexSubImage3D, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
+		GLint x, GLint y, GLsizei width, GLsizei height);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	[self changeTextureAtTarget:target is3D:YES keepPixels:YES change:^{
+		glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+	}];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION_NOT_IMPLEMENTED(compressedTexImage3D);
+EJ_BIND_FUNCTION_NOT_IMPLEMENTED(compressedTexSubImage3D);
+
+
+// Samplers
+
+EJ_BIND_FUNCTION(createSampler, ctx, argc, argv) {
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLuint sampler;
+	glGenSamplers(1, &sampler);
+	JSObjectRef obj = [EJBindingWebGLSampler createJSObjectWithContext:ctx
+		scriptView:scriptView webglContext:self index:sampler];
+	samplers[@(sampler)] = [NSValue valueWithPointer:obj];
+	return obj;
+}
+
+EJ_BIND_FUNCTION(deleteSampler, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	[[EJBindingWebGLSampler webGLObjectFromJSValue:argv[0]] invalidate];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(isSampler, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
+	return JSValueMakeBoolean(ctx, glIsSampler(sampler));
+}
+
+EJ_BIND_FUNCTION(bindSampler, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint unit = JSValueToNumberFast(ctx, argv[0]);
+	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[1]];
+	glBindSampler(unit, sampler);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(samplerParameteri, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
+	glSamplerParameteri(sampler, JSValueToNumberFast(ctx, argv[1]), JSValueToNumberFast(ctx, argv[2]));
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(samplerParameterf, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
+	glSamplerParameterf(sampler, JSValueToNumberFast(ctx, argv[1]), JSValueToNumberFast(ctx, argv[2]));
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(getSamplerParameter, ctx, argc, argv) {
+	if( argc < 2 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	GLuint sampler = [EJBindingWebGLSampler indexFromJSValue:argv[0]];
+	GLenum pname = JSValueToNumberFast(ctx, argv[1]);
+	
+	if( pname == GL_TEXTURE_MIN_LOD || pname == GL_TEXTURE_MAX_LOD ) {
+		GLfloat value;
+		glGetSamplerParameterfv(sampler, pname, &value);
+		return JSValueMakeNumber(ctx, value);
+	}
+	
+	GLint value;
+	glGetSamplerParameteriv(sampler, pname, &value);
+	return JSValueMakeNumber(ctx, value);
 }
 
 

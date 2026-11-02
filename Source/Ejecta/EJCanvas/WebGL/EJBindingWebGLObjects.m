@@ -1,4 +1,5 @@
 #import "EJBindingWebGLObjects.h"
+#import "EJBindingCanvasContextWebGL2.h"
 
 @implementation EJBindingWebGLObject
 
@@ -163,6 +164,15 @@
 
 
 @implementation EJBindingWebGLVertexArrayObject
+@end
+
+
+@implementation EJBindingWebGLSampler
+- (void)invalidate {
+	// Only WebGL 2 contexts make samplers
+	[(EJBindingCanvasContextWebGL2 *)webglContext deleteSampler:index];
+	[super invalidate];
+}
 @end
 
 

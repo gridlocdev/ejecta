@@ -4,5 +4,10 @@
 
 #import "EJBindingCanvasContextWebGL.h"
 
-@interface EJBindingCanvasContextWebGL2 : EJBindingCanvasContextWebGL
+@interface EJBindingCanvasContextWebGL2 : EJBindingCanvasContextWebGL {
+	NSMutableDictionary *samplers;
+}
+
+- (void)deleteSampler:(GLuint)sampler;
+
 @end

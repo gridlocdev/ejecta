@@ -23,14 +23,26 @@ GLuint EJGetBytesPerPixel(GLenum type, GLenum format);
 GLenum EJWebGL1InternalFormat(GLenum format, GLenum *type);
 
 #define EJ_ARRAY_MATCHES_TYPE(ARRAY, TYPE) ( \
-	(ARRAY == kJSTypedArrayTypeUint8Array && TYPE == GL_UNSIGNED_BYTE) || \
+	((ARRAY == kJSTypedArrayTypeUint8Array || ARRAY == kJSTypedArrayTypeUint8ClampedArray) && \
+		TYPE == GL_UNSIGNED_BYTE) || \
+	(ARRAY == kJSTypedArrayTypeInt8Array && TYPE == GL_BYTE) || \
+	(ARRAY == kJSTypedArrayTypeInt16Array && TYPE == GL_SHORT) || \
+	(ARRAY == kJSTypedArrayTypeInt32Array && TYPE == GL_INT) || \
 	(ARRAY == kJSTypedArrayTypeFloat32Array && TYPE == GL_FLOAT) || \
 	(ARRAY == kJSTypedArrayTypeUint16Array && ( \
+		TYPE == GL_UNSIGNED_SHORT || \
 		TYPE == GL_HALF_FLOAT_OES || \
 		TYPE == GL_HALF_FLOAT || \
 		TYPE == GL_UNSIGNED_SHORT_5_6_5 || \
 		TYPE == GL_UNSIGNED_SHORT_4_4_4_4 || \
 		TYPE == GL_UNSIGNED_SHORT_5_5_5_1 \
+	)) || \
+	(ARRAY == kJSTypedArrayTypeUint32Array && ( \
+		TYPE == GL_UNSIGNED_INT || \
+		TYPE == GL_UNSIGNED_INT_2_10_10_10_REV || \
+		TYPE == GL_UNSIGNED_INT_10F_11F_11F_REV || \
+		TYPE == GL_UNSIGNED_INT_5_9_9_9_REV || \
+		TYPE == GL_UNSIGNED_INT_24_8 \
 	)) \
 )
 
