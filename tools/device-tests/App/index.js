@@ -280,7 +280,7 @@ function drawFragment( gl, fragment ) {
 	var program = compileProgram(gl,
 		'#version 300 es\nin vec2 p; void main(){ gl_Position = vec4(p, 0, 1); }',
 		'#version 300 es\nprecision highp float; precision highp sampler3D; precision highp sampler2DArray;' +
-		'out vec4 o;' + fragment);
+		'layout(location=0) out vec4 o;' + fragment);
 	gl.useProgram(program);
 	var buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -444,6 +444,172 @@ function webgl2TextureTests() {
 	});
 }
 
+// A framebuffer with a new texture at each color attachment
+function textureFramebuffer( gl, internalformat, count, size ) {
+	var framebuffer = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+	var textures = [];
+	for( var i = 0; i < count; i++ ) {
+		var texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.texStorage2D(gl.TEXTURE_2D, 1, internalformat, size, size);
+		nearest(gl, gl.TEXTURE_2D);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, texture, 0);
+		textures.push(texture);
+	}
+	gl.bindTexture(gl.TEXTURE_2D, null);
+	return {framebuffer: framebuffer, textures: textures};
+}
+
+function readColor( gl, attachment ) {
+	gl.readBuffer(attachment);
+	var pixel = new Uint8Array(4);
+	gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+	return rgba(pixel);
+}
+
+function webgl2FramebufferTests() {
+	var canvas = document.createElement('canvas');
+	canvas.width = canvas.height = 8;
+	var gl = canvas.getContext('webgl2');
+	if( !gl ) { return skip('webgl2 framebuffers', 'getContext("webgl2") returned null'); }
+	console.log('webgl2 extensions: ' + gl.getSupportedExtensions().join(' '));
+
+	function test( name, fn ) {
+		try { fn(); }
+		catch( e ) { check(name, false, e.message); }
+	}
+
+	test('webgl2 typed array parameters', function() {
+		var viewport = gl.getParameter(gl.VIEWPORT);
+		check('webgl2 VIEWPORT has 4 values', viewport.length === 4 && viewport[2] === 8, viewport.length + ': ' + Array.from(viewport));
+	});
+
+	test('webgl2 multiple render targets', function() {
+		var target = textureFramebuffer(gl, gl.RGBA8, 2, 4);
+		gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+		check('webgl2 MRT framebuffer complete', gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE);
+		gl.viewport(0, 0, 4, 4);
+		drawFragment(gl, 'layout(location=1) out vec4 o1; void main(){ o = vec4(1, 0, 0, 1); o1 = vec4(0, 1, 0, 1); }');
+		var first = readColor(gl, gl.COLOR_ATTACHMENT0);
+		var second = readColor(gl, gl.COLOR_ATTACHMENT1);
+		check('webgl2 drawBuffers writes each target', same(first, [255, 0, 0, 255]) && same(second, [0, 255, 0, 255]),
+			first + ' / ' + second);
+
+		gl.clearBufferfv(gl.COLOR, 1, [0, 0, 1, 1]);
+		var cleared = readColor(gl, gl.COLOR_ATTACHMENT1);
+		check('webgl2 clearBufferfv', same(cleared, [0, 0, 255, 255]) && same(readColor(gl, gl.COLOR_ATTACHMENT0), [255, 0, 0, 255]), cleared);
+		gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR_ATTACHMENT1]);
+		check('webgl2 invalidateFramebuffer', gl.getError() === gl.NO_ERROR);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.drawBuffers([gl.BACK]);
+		gl.readBuffer(gl.BACK);
+		check('webgl2 drawBuffers BACK on the canvas', gl.getError() === gl.NO_ERROR);
+		gl.viewport(0, 0, 8, 8);
+	});
+
+	test('webgl2 integer render target', function() {
+		var target = textureFramebuffer(gl, gl.R32UI, 1, 4);
+		gl.clearBufferuiv(gl.COLOR, 0, new Uint32Array([4000000000, 0, 0, 0]));
+		var value = new Uint32Array(4);
+		gl.readPixels(1, 1, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_INT, value);
+		check('webgl2 clearBufferuiv, readPixels RGBA_INTEGER', value[0] === 4000000000, Array.from(value));
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	});
+
+	test('webgl2 half float render target', function() {
+		if( !gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('EXT_color_buffer_half_float') ) {
+			return skip('webgl2 half float render target', 'no EXT_color_buffer_float');
+		}
+		var target = textureFramebuffer(gl, gl.RGBA16F, 1, 4);
+		var status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+		gl.viewport(0, 0, 4, 4);
+		drawFragment(gl, 'void main(){ o = vec4(2.5, -1, .5, 1); }');
+		var value = new Float32Array(4);
+		gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.FLOAT, value);
+		check('webgl2 RGBA16F render target keeps values outside 0 to 1',
+			status === gl.FRAMEBUFFER_COMPLETE && value[0] === 2.5 && value[1] === -1, status + ': ' + Array.from(value));
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.viewport(0, 0, 8, 8);
+	});
+
+	test('webgl2 MSAA blit', function() {
+		var samples = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES);
+		check('webgl2 getInternalformatParameter SAMPLES', samples instanceof Int32Array && samples.length > 0 && samples[0] > 1,
+			samples && Array.from(samples));
+		var msaa = gl.createFramebuffer();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, msaa);
+		var color = gl.createRenderbuffer();
+		gl.bindRenderbuffer(gl.RENDERBUFFER, color);
+		gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.RGBA8, 4, 4);
+		gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, color);
+		var depth = gl.createRenderbuffer();
+		gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+		gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.DEPTH24_STENCIL8, 4, 4);
+		gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, depth);
+		check('webgl2 multisample framebuffer complete', gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE);
+		gl.clearColor(1, 0, 1, 1);
+		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+		var resolved = textureFramebuffer(gl, gl.RGBA8, 1, 4);
+		gl.bindFramebuffer(gl.READ_FRAMEBUFFER, msaa);
+		gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, resolved.framebuffer);
+		// The scissor test applies to blits; resolves must not be cut by it
+		gl.enable(gl.SCISSOR_TEST);
+		gl.scissor(0, 0, 4, 4);
+		gl.blitFramebuffer(0, 0, 4, 4, 0, 0, 4, 4, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+		gl.disable(gl.SCISSOR_TEST);
+		check('webgl2 READ_FRAMEBUFFER_BINDING', gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) === msaa);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, resolved.framebuffer);
+		var pixel = readColor(gl, gl.COLOR_ATTACHMENT0);
+		check('webgl2 blitFramebuffer resolves MSAA', same(pixel, [255, 0, 255, 255]), pixel);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.clearColor(0, 0, 0, 1);
+	});
+
+	test('webgl2 render to a texture layer', function() {
+		var array = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, array);
+		gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 4, 4, 2);
+		nearest(gl, gl.TEXTURE_2D_ARRAY);
+		var framebuffer = gl.createFramebuffer();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+		gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, array, 0, 1);
+		gl.clearColor(0, 1, 1, 1);
+		gl.clear(gl.COLOR_BUFFER_BIT);
+		gl.clearColor(0, 0, 0, 1);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		var layer = drawFragment(gl, 'uniform sampler2DArray s; void main(){ o = texture(s, vec3(.5, .5, 1)); }');
+		check('webgl2 framebufferTextureLayer', same(layer, [0, 255, 255, 255]), layer);
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+	});
+
+	test('webgl2 framebufferTexture2D keeps the texture binding', function() {
+		var bound = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, bound);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([1, 2, 3, 4]));
+		var attached = gl.createTexture();
+		var framebuffer = gl.createFramebuffer();
+		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, attached, 0);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		check('webgl2 framebufferTexture2D keeps the texture binding', gl.getParameter(gl.TEXTURE_BINDING_2D) === bound);
+		gl.bindTexture(gl.TEXTURE_2D, null);
+	});
+
+	test('webgl2 readPixels on an antialiased canvas', function() {
+		var aaCanvas = document.createElement('canvas');
+		aaCanvas.width = aaCanvas.height = 8;
+		var aa = aaCanvas.getContext('webgl2', {antialias: true});
+		aa.clearColor(0, 1, 0, 1);
+		aa.clear(aa.COLOR_BUFFER_BIT);
+		var pixel = new Uint8Array(4);
+		aa.readPixels(4, 4, 1, 1, aa.RGBA, aa.UNSIGNED_BYTE, pixel);
+		check('webgl2 readPixels on an antialiased canvas', same(rgba(pixel), [0, 255, 0, 255]) && aa.getError() === aa.NO_ERROR,
+			rgba(pixel) + ' ' + aa.getContextAttributes().antialias);
+	});
+}
+
 async function audioTests() {
 	var ctx = new AudioContext();
 	var t = ctx.currentTime;
@@ -498,7 +664,7 @@ async function littlejsTests() {
 async function run() {
 	console.log('Ejecta device tests: ' + navigator.userAgent);
 	ejecta.include('canvas2d-test.js');
-	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, webgl2TextureTests, audioTests, fetchTests, littlejsTests];
+	var steps = [canvasTests, canvas2dTests, screenCanvasTests, webglTests, webgl2Tests, webgl2TextureTests, webgl2FramebufferTests, audioTests, fetchTests, littlejsTests];
 	for( var i = 0; i < steps.length; i++ ) {
 		try { await steps[i](); }
 		catch( e ) { check(steps[i].name, false, e + ' ' + e.stack); }

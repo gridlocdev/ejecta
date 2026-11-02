@@ -39,6 +39,7 @@ TYPE *NAME(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *num
 
 CREATE_JS_VALUE_TO_ARRAY_FUNC( JSValueToGLfloatArray, GLfloat, kJSTypedArrayTypeFloat32Array);
 CREATE_JS_VALUE_TO_ARRAY_FUNC( JSValueToGLintArray, GLint, kJSTypedArrayTypeInt32Array);
+CREATE_JS_VALUE_TO_ARRAY_FUNC( JSValueToGLuintArray, GLuint, kJSTypedArrayTypeUint32Array);
 
 #undef CREATE_JS_VALUE_TO_ARRAY_FUNC
 

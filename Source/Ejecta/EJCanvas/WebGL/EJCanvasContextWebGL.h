@@ -11,7 +11,7 @@
 @interface EJCanvasContextWebGL : EJCanvasContext {
 	GLuint viewFrameBuffer, viewRenderBuffer;
 	GLuint msaaFrameBuffer, msaaRenderBuffer;
-	GLuint boundFrameBuffer, boundRenderBuffer;
+	GLuint boundReadFrameBuffer, boundDrawFrameBuffer, boundRenderBuffer;
 	GLuint depthStencilBuffer;
 	
 	GLint bufferWidth, bufferHeight;
@@ -22,6 +22,16 @@
 - (void)resizeAuxiliaryBuffers;
 - (void)bindFramebuffer:(GLint)framebuffer toTarget:(GLuint)target;
 - (void)bindRenderbuffer:(GLint)renderbuffer toTarget:(GLuint)target;
+
+// Copies the MSAA buffer into the view's buffer; the bindings stay as they are
+- (void)resolveMultisample;
+
+// Calls read with the canvas's pixels readable, if it's the bound read
+// framebuffer: its MSAA buffer can't be read from
+- (void)readPixels:(void (^)(void))read;
+
+// Whether the canvas's own framebuffer is bound to target
+- (BOOL)defaultFramebufferIsBound:(GLenum)target;
 - (void)create;
 - (void)prepare;
 - (void)clear;

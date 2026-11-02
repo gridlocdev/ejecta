@@ -15,6 +15,7 @@ extern "C" {
 
 GLfloat *JSValueToGLfloatArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
 GLint *JSValueToGLintArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
+GLuint *JSValueToGLuintArray(JSContextRef ctx, JSValueRef value, GLsizei elementSize, GLsizei *numElements);
 GLuint EJGetBytesPerPixel(GLenum type, GLenum format);
 
 // OpenGL ES 3 takes float textures only with a sized internal format, and

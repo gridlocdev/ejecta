@@ -132,20 +132,16 @@
 - (void)present {
 	if( !needsPresenting ) { return; }
 	
-	if( msaaEnabled ) {
-		//Bind the MSAA and View frameBuffers and resolve
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, msaaFrameBuffer);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, viewFrameBuffer);
-		glBlitFramebuffer(0, 0, bufferWidth, bufferHeight, 0, 0, bufferWidth, bufferHeight,
-			GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		
-		glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
-		[glContext presentRenderbuffer:GL_RENDERBUFFER];
-		glBindFramebuffer(GL_FRAMEBUFFER, msaaFrameBuffer);
-	}
-	else {
-		[glContext presentRenderbuffer:GL_RENDERBUFFER];
-	}
+	[self resolveMultisample];
+	glBindRenderbuffer(GL_RENDERBUFFER, viewRenderBuffer);
+	[glContext presentRenderbuffer:GL_RENDERBUFFER];
+	glBindRenderbuffer(GL_RENDERBUFFER, boundRenderBuffer);
+	
+	// Clear the canvas's own buffers, whatever framebuffer is bound
+	GLuint defaultFrameBuffer = msaaEnabled ? msaaFrameBuffer : viewFrameBuffer;
+	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+	if( scissor ) { glDisable(GL_SCISSOR_TEST); }
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFrameBuffer);
 	
 	if( preserveDrawingBuffer ) {
 		glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -153,6 +149,9 @@
 	else {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	}
+	
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, boundDrawFrameBuffer);
+	if( scissor ) { glEnable(GL_SCISSOR_TEST); }
 	needsPresenting = NO;
 }
 
@@ -161,7 +160,9 @@
 	scriptView.currentRenderingContext = self;
 
 	NSMutableData *pixels = [NSMutableData dataWithLength:bufferWidth * bufferHeight * 4 * sizeof(GLubyte)];
-	glReadPixels(0, 0, bufferWidth, bufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.mutableBytes);
+	[self readPixels:^{
+		glReadPixels(0, 0, bufferWidth, bufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.mutableBytes);
+	}];
 	
 	[EJTexture flipPixelsY:pixels.mutableBytes bytesPerRow:bufferWidth * 4 rows:bufferHeight];
 	EJTexture *texture = [[[EJTexture alloc] initWithWidth:bufferWidth height:bufferHeight pixels:pixels] autorelease];

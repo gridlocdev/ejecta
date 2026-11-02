@@ -105,8 +105,9 @@
 }
 
 - (void)prepare {
-	// Bind to the frame/render buffer last bound on this context
-	glBindFramebuffer(GL_FRAMEBUFFER, boundFrameBuffer);
+	// Bind to the frame/render buffers last bound on this context
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, boundReadFrameBuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, boundDrawFrameBuffer);
 	glBindRenderbuffer(GL_RENDERBUFFER, boundRenderBuffer);
 	
 	// Re-bind textures; they may have been changed in a different context
@@ -137,7 +138,46 @@
 		[self bindRenderbuffer:EJ_WEBGL_DEFAULT_RENDERBUFFER toTarget:GL_RENDERBUFFER];
 	}
 	glBindFramebuffer(target, framebuffer);
-	boundFrameBuffer = framebuffer;
+	if( target == GL_FRAMEBUFFER || target == GL_READ_FRAMEBUFFER ) {
+		boundReadFrameBuffer = framebuffer;
+	}
+	if( target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER ) {
+		boundDrawFrameBuffer = framebuffer;
+	}
+}
+
+- (BOOL)defaultFramebufferIsBound:(GLenum)target {
+	GLuint framebuffer = (target == GL_READ_FRAMEBUFFER) ? boundReadFrameBuffer : boundDrawFrameBuffer;
+	return framebuffer == viewFrameBuffer || (msaaEnabled && framebuffer == msaaFrameBuffer);
+}
+
+- (void)resolveMultisample {
+	if( !msaaEnabled ) { return; }
+	
+	// The scissor test applies to blits
+	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+	if( scissor ) { glDisable(GL_SCISSOR_TEST); }
+	
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, msaaFrameBuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, viewFrameBuffer);
+	glBlitFramebuffer(0, 0, bufferWidth, bufferHeight, 0, 0, bufferWidth, bufferHeight,
+		GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, boundReadFrameBuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, boundDrawFrameBuffer);
+	if( scissor ) { glEnable(GL_SCISSOR_TEST); }
+}
+
+- (void)readPixels:(void (^)(void))read {
+	if( !msaaEnabled || boundReadFrameBuffer != msaaFrameBuffer ) {
+		read();
+		return;
+	}
+	
+	[self resolveMultisample];
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, viewFrameBuffer);
+	read();
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, boundReadFrameBuffer);
 }
 
 - (void)bindRenderbuffer:(GLint)renderbuffer toTarget:(GLuint)target {

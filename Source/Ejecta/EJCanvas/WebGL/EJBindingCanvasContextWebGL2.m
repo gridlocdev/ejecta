@@ -683,6 +683,212 @@ EJ_BIND_FUNCTION(getSamplerParameter, ctx, argc, argv) {
 }
 
 
+// Framebuffers
+
+// The canvas's own framebuffer has the buffers BACK, or COLOR, DEPTH and
+// STENCIL. In OpenGL it's a framebuffer object with attachments.
+- (GLenum)attachmentForBuffer:(GLenum)buffer target:(GLenum)target {
+	if( ![renderingContext defaultFramebufferIsBound:target] ) { return buffer; }
+	
+	switch( buffer ) {
+		case GL_BACK:
+		case GL_COLOR: return GL_COLOR_ATTACHMENT0;
+		case GL_DEPTH: return GL_DEPTH_ATTACHMENT;
+		case GL_STENCIL: return GL_STENCIL_ATTACHMENT;
+	}
+	return buffer;
+}
+
+EJ_BIND_FUNCTION_DIRECT(blitFramebuffer, glBlitFramebuffer,
+	srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+
+EJ_BIND_FUNCTION(renderbufferStorageMultisample, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	if( internalformat == GL_DEPTH_STENCIL ) {
+		internalformat = GL_DEPTH24_STENCIL8;
+	}
+	glRenderbufferStorageMultisample(target, samples, internalformat, width, height);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(framebufferTextureLayer, ctx, argc, argv) {
+	if( argc < 5 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLenum target, GLenum attachment);
+	EJTexture *texture = [EJBindingWebGLTexture textureFromJSValue:argv[2]];
+	EJ_UNPACK_ARGV_OFFSET(3, GLint level, GLint layer);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glFramebufferTextureLayer(target, attachment, texture.textureId, level, layer);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(drawBuffers, ctx, argc, argv) {
+	if( argc < 1 ) { return NULL; }
+	
+	GLsizei count;
+	GLuint *buffers = JSValueToGLuintArray(ctx, argv[0], 1, &count);
+	if( !buffers ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLenum attachments[count];
+	for( int i = 0; i < count; i++ ) {
+		attachments[i] = [self attachmentForBuffer:buffers[i] target:GL_DRAW_FRAMEBUFFER];
+	}
+	glDrawBuffers(count, attachments);
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(readBuffer, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum src);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	glReadBuffer([self attachmentForBuffer:src target:GL_READ_FRAMEBUFFER]);
+	return NULL;
+}
+
+- (void)invalidateFramebufferWithArgc:(size_t)argc argv:(const JSValueRef [])argv ctx:(JSContextRef)ctx
+	sub:(BOOL)sub
+{
+	if( argc < (sub ? 6 : 2) ) { return; }
+	
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLsizei count;
+	GLuint *buffers = JSValueToGLuintArray(ctx, argv[1], 1, &count);
+	if( !buffers ) { return; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLenum attachments[count];
+	for( int i = 0; i < count; i++ ) {
+		attachments[i] = [self attachmentForBuffer:buffers[i] target:target];
+	}
+	
+	if( sub ) {
+		glInvalidateSubFramebuffer(target, count, attachments,
+			JSValueToNumberFast(ctx, argv[2]), JSValueToNumberFast(ctx, argv[3]),
+			JSValueToNumberFast(ctx, argv[4]), JSValueToNumberFast(ctx, argv[5]));
+	}
+	else {
+		glInvalidateFramebuffer(target, count, attachments);
+	}
+}
+
+EJ_BIND_FUNCTION(invalidateFramebuffer, ctx, argc, argv) {
+	[self invalidateFramebufferWithArgc:argc argv:argv ctx:ctx sub:NO];
+	return NULL;
+}
+
+EJ_BIND_FUNCTION(invalidateSubFramebuffer, ctx, argc, argv) {
+	[self invalidateFramebufferWithArgc:argc argv:argv ctx:ctx sub:YES];
+	return NULL;
+}
+
+// clearBuffer[fv|iv|uiv](buffer, drawbuffer, values, srcOffset)
+#define EJ_BIND_CLEAR_BUFFER(NAME, TYPE) \
+	EJ_BIND_FUNCTION(clearBuffer##NAME, ctx, argc, argv) { \
+		if( argc < 3 ) { return NULL; } \
+		GLenum buffer = JSValueToNumberFast(ctx, argv[0]); \
+		GLint drawbuffer = JSValueToNumberFast(ctx, argv[1]); \
+		GLsizei srcOffset = argc > 3 ? JSValueToNumberFast(ctx, argv[3]) : 0; \
+		GLsizei count; \
+		TYPE *values = JSValueTo##TYPE##Array(ctx, argv[2], 1, &count); \
+		GLsizei needed = (buffer == GL_COLOR) ? 4 : 1; \
+		if( !values || srcOffset < 0 || count - srcOffset < needed ) { return NULL; } \
+		scriptView.currentRenderingContext = renderingContext; \
+		glClearBuffer##NAME(buffer, drawbuffer, values + srcOffset); \
+		return NULL; \
+	}
+
+EJ_BIND_CLEAR_BUFFER(fv, GLfloat);
+EJ_BIND_CLEAR_BUFFER(iv, GLint);
+EJ_BIND_CLEAR_BUFFER(uiv, GLuint);
+
+#undef EJ_BIND_CLEAR_BUFFER
+
+EJ_BIND_FUNCTION_DIRECT(clearBufferfi, glClearBufferfi, buffer, drawbuffer, depth, stencil);
+
+EJ_BIND_FUNCTION(getInternalformatParameter, ctx, argc, argv) {
+	EJ_UNPACK_ARGV(GLenum target, GLenum internalformat, GLenum pname);
+	if( pname != GL_SAMPLES ) { return JSValueMakeNull(ctx); }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLint count = 0;
+	glGetInternalformativ(target, internalformat, GL_NUM_SAMPLE_COUNTS, 1, &count);
+	JSObjectRef array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, MAX(count, 0), NULL);
+	if( count > 0 ) {
+		GLint *samples = JSObjectGetTypedArrayBytesPtr(ctx, array, NULL);
+		glGetInternalformativ(target, internalformat, GL_SAMPLES, count, samples);
+	}
+	return array;
+}
+
+EJ_BIND_FUNCTION(getFramebufferAttachmentParameter, ctx, argc, argv) {
+	if( argc < 3 ) { return NULL; }
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLenum target = JSValueToNumberFast(ctx, argv[0]);
+	GLenum attachment = [self attachmentForBuffer:JSValueToNumberFast(ctx, argv[1]) target:target];
+	JSValueRef args[] = {argv[0], JSValueMakeNumber(ctx, attachment), argv[2]};
+	return [super _func_getFramebufferAttachmentParameter:ctx argc:3 argv:args];
+}
+
+EJ_BIND_FUNCTION(readPixels, ctx, argc, argv) {
+	// readPixels(x, y, width, height, format, type, dstData, dstOffset)
+	// readPixels(x, y, width, height, format, type, offset)
+	if( argc < 7 ) { return NULL; }
+	EJ_UNPACK_ARGV(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type);
+	
+	scriptView.currentRenderingContext = renderingContext;
+	
+	GLint packBuffer;
+	glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &packBuffer);
+	
+	// Into the pixel pack buffer
+	if( JSValueIsNumber(ctx, argv[6]) ) {
+		if( !packBuffer ) { return NULL; }
+		size_t offset = JSValueToNumberFast(ctx, argv[6]);
+		[renderingContext readPixels:^{
+			glReadPixels(x, y, width, height, format, type, EJ_BUFFER_OFFSET(offset));
+		}];
+		return NULL;
+	}
+	
+	if( packBuffer ) { return NULL; }
+	
+	JSTypedArrayType arrayType = JSValueGetTypedArrayType(ctx, argv[6], NULL);
+	GLuint bytesPerPixel = EJGetBytesPerPixel(type, format);
+	if( !EJ_ARRAY_MATCHES_TYPE(arrayType, type) || !bytesPerPixel ) { return NULL; }
+	
+	size_t byteLength = 0;
+	GLubyte *data = JSValueGetTypedArrayPtr(ctx, argv[6], &byteLength);
+	size_t offset = (argc > 7 ? JSValueToNumberFast(ctx, argv[7]) : 0) * EJTypedArrayElementSize(arrayType);
+	if( offset > byteLength ) { return NULL; }
+	
+	// The bytes OpenGL writes, with the pack state
+	GLint alignment, rowLength, skipPixels, skipRows;
+	glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+	glGetIntegerv(GL_PACK_ROW_LENGTH, &rowLength);
+	glGetIntegerv(GL_PACK_SKIP_PIXELS, &skipPixels);
+	glGetIntegerv(GL_PACK_SKIP_ROWS, &skipRows);
+	size_t bytesPerRow = ((rowLength ? rowLength : width) * bytesPerPixel + alignment - 1) / alignment * alignment;
+	size_t neededLength = (width && height)
+		? (skipRows + height - 1) * bytesPerRow + (skipPixels + width) * bytesPerPixel
+		: 0;
+	if( byteLength - offset < neededLength ) { return NULL; }
+	
+	[renderingContext readPixels:^{
+		glReadPixels(x, y, width, height, format, type, data + offset);
+	}];
+	return NULL;
+}
+
+
 // ------------------------------------------------------------------------------------
 // Constants
 

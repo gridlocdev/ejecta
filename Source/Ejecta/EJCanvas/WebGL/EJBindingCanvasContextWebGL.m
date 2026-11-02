@@ -652,9 +652,21 @@ EJ_BIND_FUNCTION(framebufferTexture2D, ctx, argc, argv) {
 	EJTexture *texture = [EJBindingWebGLTexture textureFromJSValue:argv[3]];
 	EJ_UNPACK_ARGV_OFFSET(4, GLint level);
 	
-	[texture ensureMutableKeepPixels:NO forTarget:GL_TEXTURE_2D];
-	[texture bindToTarget:GL_TEXTURE_2D];
+	// Bind it, so a texture with no pixels yet exists in OpenGL, then bind
+	// the active unit's texture again
+	GLenum bindTarget = [self bindTargetForImageTarget:textarget];
+	[texture ensureMutableKeepPixels:NO forTarget:bindTarget];
+	[texture bindToTarget:bindTarget];
 	glFramebufferTexture2D(target, attachment, textarget, texture.textureId, level);
+	
+	int slot = [self textureSlotForTarget:bindTarget];
+	EJTexture *boundTexture = slot >= 0 ? activeTexture->textures[slot] : nil;
+	if( boundTexture.textureId ) {
+		[boundTexture bindToTarget:bindTarget];
+	}
+	else {
+		glBindTexture(bindTarget, 0);
+	}
 	return NULL;
 }
 
@@ -765,28 +777,28 @@ EJ_BIND_FUNCTION(getParameter, ctx, argc, argv) {
 		case GL_ALIASED_LINE_WIDTH_RANGE:
 		case GL_ALIASED_POINT_SIZE_RANGE:
 		case GL_DEPTH_RANGE:
-			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, sizeof(GLfloat) * 2, NULL);
+			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, 2, NULL);
 			glGetFloatv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
 			break;
 		
 		// Float32Array (with 4 values)
 		case GL_BLEND_COLOR:
 		case GL_COLOR_CLEAR_VALUE:
-			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, sizeof(GLfloat) * 4, NULL);
+			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, 4, NULL);
 			glGetFloatv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
 			break;
 			
 		// Int32Array (with 2 values)
 		case GL_MAX_VIEWPORT_DIMS:
-			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, sizeof(GLint) * 2, NULL);
-			glGetFloatv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
+			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, 2, NULL);
+			glGetIntegerv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
 			break;
 			
 		// Int32Array (with 4 values)
 		case GL_SCISSOR_BOX:
 		case GL_VIEWPORT:
-			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, sizeof(GLint) * 4, NULL);
-			glGetFloatv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
+			ret = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, 4, NULL);
+			glGetIntegerv(pname, JSObjectGetTypedArrayBytesPtr(ctx, (JSObjectRef)ret, NULL));
 			break;
 		
 		// boolean[] (with 4 values)
@@ -1197,13 +1209,13 @@ EJ_BIND_FUNCTION(getUniform, ctx, argc, argv) {
 	
 	// Float32Array
 	if( type == GL_FLOAT ) {
-		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, sizeof(GLfloat) * size, NULL);
+		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, size, NULL);
 		glGetUniformfv(program, uniform, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
 	}
 	
 	// Int32Array
 	else if( type == GL_INT ) {
-		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, sizeof(GLint) * size, NULL);
+		array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, size, NULL);
 		glGetUniformfv(program, uniform, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
 	}
 	
@@ -1250,7 +1262,7 @@ EJ_BIND_FUNCTION(getVertexAttrib, ctx, argc, argv) {
 		return [buffers[@(buffer)] pointerValue];
 	}
 	else if( pname == GL_CURRENT_VERTEX_ATTRIB ) {
-		JSObjectRef array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, sizeof(GLfloat) * 4, NULL);
+		JSObjectRef array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeFloat32Array, 4, NULL);
 		glGetVertexAttribiv(index, pname, JSObjectGetTypedArrayBytesPtr(ctx, array, NULL));
 		return array;
 	}
@@ -1359,7 +1371,9 @@ EJ_BIND_FUNCTION(readPixels, ctx, argc, argv) {
 	scriptView.currentRenderingContext = renderingContext;
 	
 	void *arrayData = JSValueGetTypedArrayPtr(ctx, argv[6], NULL);
-	glReadPixels(x, y, width, height, format, type, arrayData);
+	[renderingContext readPixels:^{
+		glReadPixels(x, y, width, height, format, type, arrayData);
+	}];
 	return NULL;
 }
 

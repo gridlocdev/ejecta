@@ -85,16 +85,7 @@
 	// If this texture Canvas uses MSAA, we need to resolve the MSAA first,
 	// before we can use the texture for drawing.
 	if( msaaEnabled && needsPresenting ) {
-		GLint previousFrameBuffer;
-		glGetIntegerv( GL_FRAMEBUFFER_BINDING, &previousFrameBuffer );
-		
-		//Bind the MSAA and View frameBuffers and resolve
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, msaaFrameBuffer);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, viewFrameBuffer);
-		glBlitFramebuffer(0, 0, bufferWidth, bufferHeight, 0, 0, bufferWidth, bufferHeight,
-			GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		
-		glBindFramebuffer(GL_FRAMEBUFFER, previousFrameBuffer);
+		[self resolveMultisample];
 		needsPresenting = NO;
 	}
 	
