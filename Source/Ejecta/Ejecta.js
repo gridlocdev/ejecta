@@ -1663,4 +1663,245 @@ AudioContext.prototype.getOutputTimestamp = function() {
 };
 
 
+// WebGL 2
+
+// getContext('webgl2') returns the canvas's WebGL 1 context wrapped by this,
+// which adds the WebGL 2 calls that map onto WebGL 1 extensions: vertex array
+// objects (OES_vertex_array_object) and instancing (ANGLE_instanced_arrays).
+// GLSL ES 3.00 shaders are translated to GLSL ES 1.00, and attribute
+// locations from layout(location=N) are kept with bindAttribLocation().
+// That covers 2D engines like LittleJS. Not covered: integer textures, 3D and
+// array textures, uniform buffers, transform feedback, multiple render
+// targets, blitFramebuffer, and GLSL ES 3.00 features without a 1.00
+// equivalent (integer bit operations, texelFetch, textureSize).
+
+var glslHelpers = {
+	round: 'float round(float x){return floor(x+.5);}vec2 round(vec2 x){return floor(x+.5);}' +
+		'vec3 round(vec3 x){return floor(x+.5);}vec4 round(vec4 x){return floor(x+.5);}',
+	trunc: 'float trunc(float x){return sign(x)*floor(abs(x));}vec2 trunc(vec2 x){return sign(x)*floor(abs(x));}' +
+		'vec3 trunc(vec3 x){return sign(x)*floor(abs(x));}vec4 trunc(vec4 x){return sign(x)*floor(abs(x));}'
+};
+
+// Returns {source, attributes: [{name, location}]}. Sources that aren't
+// "#version 300 es" are returned as they are.
+var glslTranslate = window.__ejectaTranslateGLSL = function( source, isVertex ) {
+	source = String(source);
+	var attributes = [];
+	if( !/^\s*#version\s+300\s+es\b/.test(source) ) {
+		return {source: source, attributes: attributes};
+	}
+
+	// Comments out, keeping line breaks so error line numbers still match
+	var s = source
+		.replace(/\/\*[\s\S]*?\*\//g, function( c ) { return c.replace(/[^\n]/g, ' '); })
+		.replace(/\/\/[^\n]*/g, '')
+		.replace(/^\s*#version\s+300\s+es\b[^\n]*/, '');
+
+	// layout(location = N) on vertex inputs: remember for bindAttribLocation
+	s = s.replace(/layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*(in|out)\b([^;]*);/g, function( m, location, qualifier, rest ) {
+		if( isVertex && qualifier === 'in' ) {
+			var names = rest.replace(/\b(highp|mediump|lowp|flat|smooth)\b/g, '').trim().split(/\s+/).slice(1).join(' ').split(',');
+			names.forEach(function( name, i ) {
+				attributes.push({name: name.trim().replace(/\[.*$/, ''), location: +location + i});
+			});
+		}
+		return qualifier + rest + ';';
+	});
+
+	// Interpolation qualifiers don't exist in 1.00
+	s = s.replace(/\b(flat|smooth|centroid)\s+(?=(in|out|highp|mediump|lowp|\w+\s+\w))/g, '');
+
+	// Global in/out declarations start a statement; parameters don't
+	var outputs = [];
+	// (the ; is left for the next match to start from: no lookbehind before iOS 16.4)
+	s = s.replace(/(^|[;{}\n])(\s*)(in|out)\s+((?:highp|mediump|lowp)\s+)?(\w+)\s+([^;]+)(?=;)/g,
+		function( m, before, space, qualifier, precision, type, names ) {
+			precision = precision || '';
+			if( qualifier === 'in' ) {
+				return before + space + (isVertex ? 'attribute ' : 'varying ') + precision + type + ' ' + names;
+			}
+			if( isVertex ) {
+				return before + space + 'varying ' + precision + type + ' ' + names;
+			}
+			// A fragment output becomes a global that main() copies out
+			outputs.push(names.split(',')[0].trim());
+			return before + space + precision + type + ' ' + names;
+		});
+
+	// texture() picks texture2D or textureCube by the sampler's type
+	var cubes = {};
+	s.replace(/uniform\s+(?:(?:highp|mediump|lowp)\s+)?samplerCube\s+([^;]+);/g, function( m, names ) {
+		names.split(',').forEach(function( n ) { cubes[n.trim()] = true; });
+	});
+	s = s.replace(/\btexture\s*\(\s*(\w+)/g, function( m, sampler ) {
+		return (cubes[sampler] ? 'textureCube(' : 'texture2D(') + sampler;
+	});
+
+	if( !isVertex && outputs.length ) {
+		s = s.replace(/\bvoid\s+main\s*\(/, 'void ejectaMain(');
+		s += '\nvoid main(){ejectaMain();gl_FragColor=vec4(' + outputs[0] + ');}\n';
+	}
+
+	// Functions 3.00 has and 1.00 doesn't, after the precision statement
+	var helpers = '';
+	for( var name in glslHelpers ) {
+		if( new RegExp('\\b' + name + '\\s*\\(').test(s) ) { helpers += glslHelpers[name]; }
+	}
+	var precision = /precision\s+(highp|mediump|lowp)\s+float\s*;/.exec(s);
+	if( !precision && !isVertex ) {
+		s = 'precision mediump float;' + s;
+		precision = /precision\s+(highp|mediump|lowp)\s+float\s*;/.exec(s);
+	}
+	if( helpers ) {
+		var at = precision ? precision.index + precision[0].length : 0;
+		s = s.slice(0, at) + helpers + s.slice(at);
+	}
+	return {source: s, attributes: attributes};
+};
+
+window.__ejectaMakeWebGL2 = function( gl ) {
+	var vao = gl.getExtension('OES_vertex_array_object');
+	var instancing = gl.getExtension('ANGLE_instanced_arrays');
+	if( !vao || !instancing ) {
+		console.warn('WebGL 2 needs OES_vertex_array_object and ANGLE_instanced_arrays');
+		return null;
+	}
+	gl.getExtension('OES_element_index_uint'); // core in WebGL 2
+	gl.getExtension('OES_standard_derivatives');
+
+	var shaderInfo = new WeakMap();      // shader -> {source, isVertex, attributes}
+	var programShaders = new WeakMap();  // program -> [shaders]
+	var boundVertexArray = null;
+
+	// WebGL 2 sized internal formats as their WebGL 1 formats
+	var sizedFormats = {};
+	sizedFormats[0x8058] = gl.RGBA;      // RGBA8
+	sizedFormats[0x8051] = gl.RGB;       // RGB8
+	sizedFormats[0x8C43] = gl.RGBA;      // SRGB8_ALPHA8
+	var webglFormat = function( internalformat ) {
+		return sizedFormats[internalformat] || internalformat;
+	};
+
+	var extra = {
+		// Vertex array objects
+		createVertexArray: function() { return vao.createVertexArrayOES(); },
+		deleteVertexArray: function( v ) {
+			if( v && v === boundVertexArray ) { boundVertexArray = null; }
+			vao.deleteVertexArrayOES(v);
+		},
+		isVertexArray: function( v ) { return vao.isVertexArrayOES(v); },
+		bindVertexArray: function( v ) { boundVertexArray = v || null; vao.bindVertexArrayOES(v || null); },
+
+		// Instancing
+		vertexAttribDivisor: function( index, divisor ) { instancing.vertexAttribDivisorANGLE(index, divisor); },
+		drawArraysInstanced: function( mode, first, count, instances ) {
+			instancing.drawArraysInstancedANGLE(mode, first, count, instances);
+		},
+		drawElementsInstanced: function( mode, count, type, offset, instances ) {
+			instancing.drawElementsInstancedANGLE(mode, count, type, offset, instances);
+		},
+
+		// Shaders: translate 3.00 to 1.00 and keep attribute locations
+		shaderSource: function( shader, source ) {
+			var isVertex = gl.getShaderParameter(shader, gl.SHADER_TYPE) === gl.VERTEX_SHADER;
+			var translated = glslTranslate(source, isVertex);
+			shaderInfo.set(shader, {source: String(source), attributes: translated.attributes});
+			gl.shaderSource(shader, translated.source);
+		},
+		getShaderSource: function( shader ) {
+			var info = shaderInfo.get(shader);
+			return info ? info.source : gl.getShaderSource(shader);
+		},
+		attachShader: function( program, shader ) {
+			var list = programShaders.get(program) || [];
+			if( list.indexOf(shader) < 0 ) { list.push(shader); }
+			programShaders.set(program, list);
+			gl.attachShader(program, shader);
+		},
+		detachShader: function( program, shader ) {
+			var list = programShaders.get(program) || [];
+			var index = list.indexOf(shader);
+			if( index >= 0 ) { list.splice(index, 1); }
+			gl.detachShader(program, shader);
+		},
+		linkProgram: function( program ) {
+			(programShaders.get(program) || []).forEach(function( shader ) {
+				var info = shaderInfo.get(shader);
+				(info ? info.attributes : []).forEach(function( a ) {
+					gl.bindAttribLocation(program, a.location, a.name);
+				});
+			});
+			gl.linkProgram(program);
+		},
+
+		// Textures with sized formats
+		texImage2D: function( target, level, internalformat ) {
+			var args = Array.prototype.slice.call(arguments);
+			args[2] = webglFormat(internalformat);
+			return gl.texImage2D.apply(gl, args);
+		},
+		texStorage2D: function( target, levels, internalformat, width, height ) {
+			var format = webglFormat(internalformat);
+			for( var level = 0; level < levels; level++ ) {
+				gl.texImage2D(target, level, format, Math.max(1, width >> level), Math.max(1, height >> level),
+					0, format, gl.UNSIGNED_BYTE, null);
+			}
+		},
+
+		// Samplers: accepted, but textures keep their own parameters
+		createSampler: function() { return {}; },
+		deleteSampler: function() {},
+		isSampler: function( s ) { return !!s; },
+		bindSampler: function() {},
+		samplerParameteri: function() {},
+		samplerParameterf: function() {},
+
+		drawBuffers: function( buffers ) {
+			if( buffers.length > 1 ) { console.warn('drawBuffers: only one color attachment is supported'); }
+		},
+
+		getParameter: function( pname ) {
+			if( pname === 0x1F02 ) { return 'WebGL 2.0 (Ejecta, on WebGL 1)'; }   // VERSION
+			if( pname === 0x8B8C ) { return 'WebGL GLSL ES 3.00 (Ejecta)'; }      // SHADING_LANGUAGE_VERSION
+			if( pname === 0x85B5 ) { return boundVertexArray; }                    // VERTEX_ARRAY_BINDING
+			if( pname === 0x8D57 ) { return 4; }                                   // MAX_SAMPLES
+			return gl.getParameter(pname);
+		},
+
+		// WebGL 2 constants that WebGL 1 doesn't define
+		VERTEX_ARRAY_BINDING: 0x85B5, VERTEX_ATTRIB_ARRAY_DIVISOR: 0x88FE,
+		RGBA8: 0x8058, RGB8: 0x8051, SRGB8_ALPHA8: 0x8C43, R8: 0x8229, RG8: 0x822B, RED: 0x1903, RG: 0x8227,
+		HALF_FLOAT: 0x140B, RGBA16F: 0x881A, RGBA32F: 0x8814, R16F: 0x822D, R32F: 0x822E,
+		DEPTH_COMPONENT24: 0x81A6, DEPTH24_STENCIL8: 0x88F0, DEPTH_COMPONENT32F: 0x8CAC,
+		READ_FRAMEBUFFER: 0x8CA8, DRAW_FRAMEBUFFER: 0x8CA9, MAX_SAMPLES: 0x8D57,
+		COLOR_ATTACHMENT1: 0x8CE1, COLOR_ATTACHMENT2: 0x8CE2, COLOR_ATTACHMENT3: 0x8CE3,
+		TEXTURE_3D: 0x806F, TEXTURE_2D_ARRAY: 0x8C1A, TEXTURE_WRAP_R: 0x8072,
+		TEXTURE_MIN_LOD: 0x813A, TEXTURE_MAX_LOD: 0x813B, TEXTURE_BASE_LEVEL: 0x813C, TEXTURE_MAX_LEVEL: 0x813D,
+		UNIFORM_BUFFER: 0x8A11, PIXEL_PACK_BUFFER: 0x88EB, PIXEL_UNPACK_BUFFER: 0x88EC,
+		COPY_READ_BUFFER: 0x8F36, COPY_WRITE_BUFFER: 0x8F37,
+		MIN: 0x8007, MAX: 0x8008, STREAM_READ: 0x88E1, STATIC_READ: 0x88E5, DYNAMIC_READ: 0x88E9
+	};
+
+	var bound = new Map();
+	return new Proxy(gl, {
+		get: function( target, prop ) {
+			if( prop in extra ) { return extra[prop]; }
+			var value = target[prop];
+			if( typeof value !== 'function' ) { return value; }
+			// Native WebGL calls need the native context as `this`
+			var fn = bound.get(prop);
+			if( !fn ) { fn = value.bind(target); bound.set(prop, fn); }
+			return fn;
+		},
+		set: function( target, prop, value ) {
+			target[prop] = value;
+			return true;
+		},
+		has: function( target, prop ) {
+			return prop in extra || prop in target;
+		}
+	});
+};
+
+
 })(this);

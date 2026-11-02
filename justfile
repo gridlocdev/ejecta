@@ -84,9 +84,10 @@ test-canvas:
         tools/canvas-test/dash_test.cpp -o {{derived}}/dash-test
     {{derived}}/dash-test
 
-# Check Ejecta.js's Web Audio and fetch() in the API simulator
+# Check Ejecta.js's Web Audio, fetch() and WebGL 2 layer in the API simulator
 test-js:
     node tools/ejecta-sim/sim.mjs tools/ejecta-sim/tests/webaudio 8
+    node tools/ejecta-sim/sim.mjs tools/ejecta-sim/tests/webgl2 1
 
 # Rebuild the simulator's WebAssembly copy of the audio C code (needs LLVM clang with wasm32 and wasm-ld)
 build-wasm:

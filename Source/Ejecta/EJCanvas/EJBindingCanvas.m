@@ -160,10 +160,37 @@ EJ_BIND_FUNCTION(getContext, ctx, argc, argv) {
 			: EJCanvasContext2DTexture.class;
 	}
 	else if( [type rangeOfString:@"webgl2"].location != NSNotFound ) {
-		// Only WebGL 1 is implemented. Return null like a browser without
-		// WebGL 2 would, so engines (e.g. LittleJS) fall back on their own
-		// instead of getting a WebGL 1 context they can't use.
-		return JSValueMakeNull(ctx);
+		// WebGL 2 is built in Ejecta.js on top of this canvas's WebGL 1
+		// context and its extensions; see __ejectaMakeWebGL2 there.
+		if( jsWebGL2Context ) { return jsWebGL2Context; }
+		
+		JSValueRef webglArgv[2] = {
+			NSStringToJSValue(ctx, @"webgl"),
+			argc > 1 ? argv[1] : JSValueMakeUndefined(ctx)
+		};
+		JSValueRef webgl = [self _func_getContext:ctx argc:2 argv:webglArgv];
+		if( !webgl || !JSValueIsObject(ctx, webgl) ) { return JSValueMakeNull(ctx); }
+		
+		JSStringRef makerName = JSStringCreateWithUTF8CString("__ejectaMakeWebGL2");
+		JSValueRef maker = JSObjectGetProperty(ctx, JSContextGetGlobalObject(ctx), makerName, NULL);
+		JSStringRelease(makerName);
+		if( !JSValueIsObject(ctx, maker) || !JSObjectIsFunction(ctx, (JSObjectRef)maker) ) {
+			return JSValueMakeNull(ctx);
+		}
+		
+		JSValueRef exception = NULL;
+		JSValueRef wrapped = JSObjectCallAsFunction(ctx, (JSObjectRef)maker, NULL, 1, &webgl, &exception);
+		if( exception || !wrapped || !JSValueIsObject(ctx, wrapped) ) {
+			if( exception ) { [scriptView logException:exception ctx:ctx]; }
+			return JSValueMakeNull(ctx);
+		}
+		
+		// The canvas keeps the wrapper alive, as it does its context
+		jsWebGL2Context = (JSObjectRef)wrapped;
+		JSStringRef wrapperName = JSStringCreateWithUTF8CString("__webgl2Context");
+		JSObjectSetProperty(ctx, jsObject, wrapperName, wrapped, kJSPropertyAttributeDontEnum, NULL);
+		JSStringRelease(wrapperName);
+		return wrapped;
 	}
 	else if( [type rangeOfString:@"webgl"].location != NSNotFound ) {
 		newContextMode = kEJCanvasContextModeWebGL;

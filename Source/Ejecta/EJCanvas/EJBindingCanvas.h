@@ -31,6 +31,7 @@ typedef enum {
 
 @interface EJBindingCanvas : EJBindingBase <EJDrawable> {
 	JSObjectRef jsCanvasContext;
+	JSObjectRef jsWebGL2Context; // Ejecta.js's WebGL 2 wrapper of the WebGL context
 	EJCanvasContext *renderingContext;
 	EJCanvasContextMode contextMode;
 	short width, height;

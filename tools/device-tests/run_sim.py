@@ -3,7 +3,7 @@
 
 Usage: run_sim.py APP_PATH BUNDLE_ID [TIMEOUT_SECONDS]
 
-Creates an Apple TV simulator on the newest tvOS runtime, installs and launches
+Creates an Apple TV simulator on the tvOS runtime matching the SDK, installs and launches
 the app with its console attached, and prints everything it logs. Exits 0 once
 the app logs a line containing "DONE" with no "FAIL" lines before it, and 1 on
 a FAIL, a crash or a timeout. The simulator is deleted afterwards.
@@ -22,7 +22,11 @@ def main():
     if not runtimes:
         print('No tvOS simulator runtime is installed (xcodebuild -downloadPlatform tvOS)')
         return 1
-    runtime = sorted(runtimes, key=lambda r: [int(x) for x in r['version'].split('.')])[-1]
+    # The runtime that matches the SDK the app was built with, else the newest
+    sdk = subprocess.run(['xcrun', '--sdk', 'appletvsimulator', '--show-sdk-version'],
+                         capture_output=True, text=True).stdout.strip()
+    runtimes.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
+    runtime = next((r for r in runtimes if r['version'] == sdk), runtimes[-1])
     device_types = [d for d in runtime.get('supportedDeviceTypes', []) if 'Apple TV' in d['name']]
     device_type = next((d for d in device_types if '4K' in d['name']), device_types[-1] if device_types else None)
     if not device_type:
